@@ -275,13 +275,11 @@ static bool serial_key(struct key_event *ev)
 void kbd_wait(struct key_event *ev)
 {
     for (;;) {
-        if (kbd_poll(ev))
-            return;
-        if (serial_key(ev))
-            return;
+        cli();                          /* ellenorzes + blokkolas atomian az IRQ-val szemben */
+        if (kbd_poll(ev) || serial_key(ev)) { sti(); return; }
         if (task_current()) {
-            if (task_current()->killed) { ev->code = 0; ev->mods = 0; ev->tsc = rdtsc(); return; }
-            task_block_on(&kbd_q);
+            if (task_current()->killed) { sti(); ev->code = 0; ev->mods = 0; ev->tsc = rdtsc(); return; }
+            task_block_on(&kbd_q);      /* IF=1-gyel ter vissza */
         } else {
             idle_enter();
         }

@@ -39,6 +39,9 @@ SESSIONS = [
         ("fb", "konzol"),
         ("bench", "boot -> prompt"),
         ("uptime", " s"),
+        ("net", "ip 10.0.2.15"),
+        ("ping 10.0.2.2", "valasz, rtt"),
+        ("nc 10.0.2.2 4590 hello ao", "echo: hello ao"),
         ("mkfs", "IGEN"),
         ("IGEN", "csatolva: /"),
         ("mount", "aofs2"),
@@ -123,8 +126,41 @@ def boot(t):
     return p, s
 
 
+def echo_server():
+    """TCP echo a host oldalon: a vendeg 10.0.2.2:4590-en eri el (QEMU user-net)."""
+    import threading
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 4590))
+    srv.listen(2)
+
+    def loop():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            try:
+                c.settimeout(5)
+                data = b""
+                while not data.endswith(b"\n"):
+                    chunk = c.recv(256)
+                    if not chunk:
+                        break
+                    data += chunk
+                c.sendall(b"echo: " + data)
+            except OSError:
+                pass
+            finally:
+                c.close()
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+    return srv
+
+
 def main():
     t = ao.tools()
+    echo_server()
     # a teszt modositja a lemezkepet: masolaton dolgozunk
     img = os.path.join(ao.BUILD, "ao.img")
     test_img = os.path.join(ao.BUILD, "ao-test.img")

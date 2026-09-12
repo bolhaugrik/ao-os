@@ -1,4 +1,5 @@
 #include "pipe.h"
+#include "../arch/io.h"
 #include "../mm/kheap.h"
 #include "../lib/string.h"
 
@@ -26,13 +27,14 @@ void pipe_close(struct pipe *p, bool write_end)
 isize pipe_read(struct pipe *p, void *buf, usize n)
 {
     u8 *d = buf;
+    cli();
     while (p->count == 0) {
-        if (!p->writers)
-            return 0;
+        if (!p->writers) { sti(); return 0; }
         task_block_on(&p->rq);
-        if (task_current()->killed)
-            return E_PIPE;
+        if (task_current()->killed) return E_PIPE;
+        cli();
     }
+    sti();
     usize got = 0;
     while (got < n && p->count) {
         d[got++] = p->buf[p->tail];
@@ -50,11 +52,14 @@ isize pipe_write(struct pipe *p, const void *buf, usize n)
     while (put < n) {
         if (!p->readers)
             return put ? (isize)put : E_PIPE;
+        cli();
         while (p->count == PIPE_BUF) {
             task_block_on(&p->wq);
             if (task_current()->killed || !p->readers)
                 return put ? (isize)put : E_PIPE;
+            cli();
         }
+        sti();
         p->buf[p->head] = s[put++];
         p->head = (p->head + 1) % PIPE_BUF;
         p->count++;

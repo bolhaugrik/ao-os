@@ -14,6 +14,8 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../mm/kheap.h"
+#include "../fs/vfs.h"
+#include "../net/tcp.h"
 #include "../lib/string.h"
 
 static struct task tasks[TASK_MAX];
@@ -395,6 +397,8 @@ static void close_handle(struct handle *h)
 {
     if (h->type == H_PIPE_R) pipe_close(h->obj, false);
     else if (h->type == H_PIPE_W) pipe_close(h->obj, true);
+    else if (h->type == H_SOCK) tcp_close((int)(uptr)h->obj);
+    else if (h->type == H_FILE || h->type == H_DIR) vfs_close(h);
     h->type = H_NONE;
     h->obj = NULL;
 }

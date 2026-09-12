@@ -61,6 +61,10 @@ KERNEL_C = [
     "kernel/drv/pci.c",
     "kernel/drv/ahci.c",
     "kernel/drv/acpi.c",
+    "kernel/drv/e1000.c",
+    "kernel/net/net.c",
+    "kernel/net/tcp.c",
+    "kernel/net/dhcp.c",
     "kernel/fs/aofs.c",
     "kernel/fs/aofs2.c",
     "kernel/fs/disk.c",
@@ -179,6 +183,7 @@ def qemu_cmd(t, extra):
     return [t["qemu"], "-machine", "pc", "-m", QEMU_MEM,
             "-drive", f"file={os.path.join(BUILD, 'ao.img')},format=raw,if=none,id=d0",
             "-device", "ahci,id=ahci", "-device", "ide-hd,drive=d0,bus=ahci.0",
+            "-netdev", "user,id=n0", "-device", "e1000,netdev=n0",
             "-vga", "std", "-no-reboot", "-no-shutdown"] + extra
 
 

@@ -9,6 +9,8 @@
 #include "../drv/console.h"
 #include "../drv/kbd.h"
 #include "../fs/vfs.h"
+#include "../net/net.h"
+#include "../net/tcp.h"
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "../lib/string.h"
@@ -96,6 +98,8 @@ static isize sys_write(struct task *t, int fd, u64 ubuf, usize n)
         return pipe_write(h->obj, buf, n);
     case H_FILE:
         return vfs_write(h, buf, n);
+    case H_SOCK:
+        return tcp_send((int)(uptr)h->obj, buf, n);
     default:
         return E_BADF;
     }
@@ -115,6 +119,8 @@ static isize sys_read(struct task *t, int fd, u64 ubuf, usize n)
         return pipe_read(h->obj, buf, n);
     case H_FILE:
         return vfs_read(h, buf, n);
+    case H_SOCK:
+        return tcp_recv((int)(uptr)h->obj, buf, n, 0);
     default:
         return E_BADF;
     }
@@ -127,6 +133,7 @@ static int sys_close(struct task *t, int fd)
     if (h->type == H_PIPE_R) pipe_close(h->obj, false);
     else if (h->type == H_PIPE_W) pipe_close(h->obj, true);
     else if (h->type == H_FILE || h->type == H_DIR) vfs_close(h);
+    else if (h->type == H_SOCK) tcp_close((int)(uptr)h->obj);
     h->type = H_NONE;
     h->obj = NULL;
     return 0;
@@ -304,6 +311,41 @@ static int sys_sysinfo(struct task *t, u64 uptr_)
     return 0;
 }
 
+/* ---------------------------------------------------------------- halozat */
+static int sys_net_connect(struct task *t, u64 uaddr)
+{
+    char addr[64];
+    if (!copy_str(t, uaddr, addr, sizeof addr)) return E_INVAL;
+    u32 ip;
+    if (!ip_parse(addr, &ip)) return E_INVAL;
+    const char *p = addr;
+    while (*p && *p != ':') p++;
+    if (*p != ':') return E_INVAL;
+    u32 port = 0;
+    for (p++; *p >= '0' && *p <= '9'; p++) port = port * 10 + (u32)(*p - '0');
+    if (!port || port > 65535) return E_INVAL;
+    if (!cap_check(t, CAP_NET, addr)) return E_CAP;
+    int fd = alloc_fd(t);
+    if (fd < 0) return fd;
+    int s = tcp_connect(ip, (u16)port, 5000);
+    if (s < 0) return s;
+    t->handles[fd].type = H_SOCK;
+    t->handles[fd].obj = (void *)(uptr)s;
+    t->handles[fd].pos = 0;
+    return fd;
+}
+
+static int sys_net_info(struct task *t, u64 uptr_)
+{
+    if (!user_range_ok(t, uptr_, sizeof(struct netinfo))) return E_INVAL;
+    struct netinfo *ni = (struct netinfo *)(uptr)uptr_;
+    memset(ni, 0, sizeof *ni);
+    ni->ip = net_cfg.ip; ni->mask = net_cfg.mask; ni->gw = net_cfg.gw;
+    ni->configured = net_cfg.configured;
+    if (net_dev()) { memcpy(ni->mac, net_dev()->mac, 6); ni->up = net_dev()->up; }
+    return 0;
+}
+
 /* ---------------------------------------------------------------- elosztas */
 void syscall_dispatch(struct regs *r)
 {
@@ -344,6 +386,8 @@ void syscall_dispatch(struct regs *r)
         if (!user_range_ok(t, a, b)) ret = E_INVAL;
         else { strlcpy((char *)(uptr)a, t->cwd, b); ret = (i64)strlen(t->cwd); }
         break;
+    case SYS_NET_CONNECT: ret = sys_net_connect(t, a); break;
+    case SYS_NET_INFO: ret = sys_net_info(t, a); break;
     default:          ret = E_NOSYS; break;
     }
     (void)d;

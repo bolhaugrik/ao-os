@@ -18,6 +18,9 @@
 #include "drv/ahci.h"
 #include "drv/blk.h"
 #include "drv/acpi.h"
+#include "drv/e1000.h"
+#include "net/net.h"
+#include "net/dhcp.h"
 #include "fs/disk.h"
 #include "fs/aofs.h"
 #include "fs/vfs.h"
@@ -71,6 +74,19 @@ static void shell_thread(void *arg)
 {
     (void)arg;
     shell_run(boot);
+}
+
+/* automatikus DHCP a hatterben, hogy a prompt ne varjon ra */
+static void net_thread(void *arg)
+{
+    (void)arg;
+    task_sleep_ms(200);
+    int e = dhcp_run(8000);
+    char ip[20];
+    ip_format(net_cfg.ip, ip, sizeof ip);
+    if (e == 0) kprintf("\n[net: dhcp ok, ip %s]\n", ip);
+    else kprintf("\n[net: dhcp sikertelen, 'ip' paranccsal allithato]\n");
+    console_flush();
 }
 
 void kmain(struct bootinfo *bi)
@@ -135,6 +151,15 @@ void kmain(struct bootinfo *bi)
     }
     kprintf("acpi: %s\n", acpi_init() ? "OK (poweroff elerheto)" : "nincs _S5");
 
+    net_init();
+    if (e1000_init()) {
+        const struct netdev *nd = net_dev();
+        kprintf("net: %s  mac %02x:%02x:%02x:%02x:%02x:%02x\n", nd->name,
+                nd->mac[0], nd->mac[1], nd->mac[2], nd->mac[3], nd->mac[4], nd->mac[5]);
+    } else {
+        kprintf("net: nincs tamogatott halozati kartya\n");
+    }
+
     kprintf("pci: %u eszkoz   tsc: %lu MHz   kbd: i8042\n", pci_count(), tsc_hz() / 1000000);
     for (int i = 1; i < nstamp; i++)
         kprintf("  %-8s +%lu us\n", stamp_name[i], tsc_to_us(stamp[i] - stamp[i - 1]));
@@ -143,5 +168,7 @@ void kmain(struct bootinfo *bi)
 
     task_init();
     task_create_kernel("shell", shell_thread, NULL);
+    if (net_dev())
+        task_create_kernel("net", net_thread, NULL);
     task_idle_loop();
 }

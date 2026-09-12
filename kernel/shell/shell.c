@@ -19,6 +19,9 @@
 #include "../drv/blk.h"
 #include "../drv/ahci.h"
 #include "../drv/acpi.h"
+#include "../net/net.h"
+#include "../net/tcp.h"
+#include "../net/dhcp.h"
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "../task/task.h"
@@ -163,6 +166,7 @@ static void cmd_help(void)
             "  spawn manifest prog [..] AOX program a manifest capability-keszletevel\n"
             "  ps  kill pid  caps [pid]  audit   taskok es jogosultsagok\n"
             "  install  mkfs  sync  lastpanic [clear]   belso lemez (AOFS v2)\n"
+            "  net  dhcp  ip CIM MASZK [GW]  ping CIM  nc CIM PORT [szoveg]   halozat\n"
             "  kbd [us|hu]  bench  uptime  echo  clear  crash [div|page|ud]  reboot  poweroff\n"
             "  Shift/PgUp/PgDn gorgetes, Ctrl+C sor torlese, Ctrl+L clear\n");
 }
@@ -268,6 +272,81 @@ static void cmd_install(bool only_mkfs)
     int e = only_mkfs ? disk_mkfs("ao") : disk_install("ao");
     if (e) kprintf("%s: hiba: %s\n", only_mkfs ? "mkfs" : "install", errstr(e));
     else if (only_mkfs) { e = disk_mount_root(); if (e) kprintf("mkfs: csatolas: %s\n", errstr(e)); }
+}
+
+/* ---------------------------------------------------------------- halozat */
+static void cmd_net(void)
+{
+    struct netdev *d = net_dev();
+    if (!d) { kprintf("nincs halozati eszkoz\n"); return; }
+    char ip[20], mask[20], gw[20];
+    ip_format(net_cfg.ip, ip, sizeof ip);
+    ip_format(net_cfg.mask, mask, sizeof mask);
+    ip_format(net_cfg.gw, gw, sizeof gw);
+    kprintf("%s  mac %02x:%02x:%02x:%02x:%02x:%02x  link %s\n", d->name,
+            d->mac[0], d->mac[1], d->mac[2], d->mac[3], d->mac[4], d->mac[5], d->up ? "up" : "down");
+    if (net_cfg.configured) kprintf("ip %s  mask %s  gw %s\n", ip, mask, gw);
+    else kprintf("ip: nincs beallitva (dhcp vagy ip parancs)\n");
+    u64 rx, tx, drop;
+    net_stats(&rx, &tx, &drop);
+    kprintf("rx %lu  tx %lu  eldobva %lu\n", rx, tx, drop);
+}
+
+static void cmd_dhcp(void)
+{
+    kprintf("dhcp...\n");
+    console_flush();
+    int e = dhcp_run(8000);
+    if (e) { kprintf("dhcp: %s\n", errstr(e)); return; }
+    cmd_net();
+}
+
+static void cmd_ip(int argc, char **argv)
+{
+    u32 ip, mask, gw = 0;
+    if (argc < 3 || !ip_parse(argv[1], &ip) || !ip_parse(argv[2], &mask) || (argc > 3 && !ip_parse(argv[3], &gw))) {
+        kprintf("ip CIM MASZK [ATJARO]\n");
+        return;
+    }
+    net_cfg.ip = ip; net_cfg.mask = mask; net_cfg.gw = gw; net_cfg.configured = true;
+    cmd_net();
+}
+
+static void cmd_ping(const char *arg)
+{
+    u32 ip;
+    if (!arg || !ip_parse(arg, &ip)) { kprintf("ping CIM\n"); return; }
+    for (int i = 0; i < 3; i++) {
+        u32 rtt;
+        int e = net_ping(ip, 2000, &rtt);
+        if (e) kprintf("  %s: %s\n", arg, errstr(e));
+        else kprintf("  %s: valasz, rtt %u us\n", arg, rtt);
+        console_flush();
+    }
+}
+
+static void cmd_nc(int argc, char **argv)
+{
+    u32 ip;
+    if (argc < 3 || !ip_parse(argv[1], &ip)) { kprintf("nc CIM PORT [szoveg]\n"); return; }
+    u32 port = 0;
+    for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++) port = port * 10 + (u32)(*p - '0');
+    int s = tcp_connect(ip, (u16)port, 5000);
+    if (s < 0) { kprintf("nc: kapcsolodas: %s\n", errstr(s)); return; }
+    kprintf("nc: kapcsolodva (%s)\n", tcp_state_name(s));
+    char line[LINE_MAX];
+    usize n = 0;
+    for (int i = 3; i < argc; i++) n += snformat(line + n, sizeof line - n, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
+    if (n) tcp_send(s, line, n);
+    for (int i = 0; i < 20; i++) {
+        char buf[256];
+        isize r = tcp_recv(s, buf, sizeof buf, 2000);
+        if (r <= 0) break;
+        for (isize k = 0; k < r; k++) console_putc(buf[k]);
+        console_flush();
+    }
+    tcp_close(s);
+    kprintf("\nnc: zarva\n");
 }
 
 static void cmd_lastpanic(bool clear)
@@ -561,6 +640,11 @@ static void execute(char *line)
     else if (!strcmp(c, "echo")) { for (int i = 1; i < argc; i++) kprintf("%s%s", argv[i], i + 1 < argc ? " " : ""); kprintf("\n"); }
     else if (!strcmp(c, "clear")) console_clear();
     else if (!strcmp(c, "crash")) cmd_crash(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "net")) cmd_net();
+    else if (!strcmp(c, "dhcp")) cmd_dhcp();
+    else if (!strcmp(c, "ip")) cmd_ip(argc, argv);
+    else if (!strcmp(c, "ping")) cmd_ping(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "nc")) cmd_nc(argc, argv);
     else if (!strcmp(c, "install")) cmd_install(false);
     else if (!strcmp(c, "mkfs")) cmd_install(true);
     else if (!strcmp(c, "sync")) { int e = vfs_sync(); kprintf(e ? "sync: %s\n" : "sync: ok\n", errstr(e)); }

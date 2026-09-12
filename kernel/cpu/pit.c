@@ -5,6 +5,7 @@
 #include "../arch/io.h"
 #include "../task/task.h"
 #include "../drv/kbd.h"
+#include "../net/net.h"
 
 static volatile u64 ticks;
 static volatile u64 idle_ticks;
@@ -18,6 +19,7 @@ static void pit_irq(struct regs *r)
         idle_ticks++;
     if (task_current()) {
         kbd_tick();
+        net_poll();
         task_tick();
     }
 }

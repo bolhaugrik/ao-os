@@ -26,6 +26,8 @@ enum {
     SYS_SEEK,         /* (fd, off) */
     SYS_CHDIR,        /* (path) */
     SYS_GETCWD,       /* (buf, n) */
+    SYS_NET_CONNECT,  /* ("ip:port") -> fd; read/write/close a socketen */
+    SYS_NET_INFO,     /* (struct netinfo*) */
     SYS_MAX
 };
 
@@ -76,6 +78,12 @@ struct stat {
     u32 type;
     u32 size;
     u64 mtime;
+};
+
+struct netinfo {
+    u32 ip, mask, gw;       /* host-sorrend */
+    u8  mac[6];
+    u8  up, configured;
 };
 
 /* task-limitek a manifestben / spawn-nal */

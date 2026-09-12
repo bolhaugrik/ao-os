@@ -14,7 +14,7 @@ struct regs;
 
 enum task_state { T_FREE = 0, T_READY, T_RUNNING, T_BLOCKED, T_ZOMBIE };
 
-enum handle_type { H_NONE = 0, H_CON_IN, H_CON_OUT, H_PIPE_R, H_PIPE_W, H_FILE, H_DIR };
+enum handle_type { H_NONE = 0, H_CON_IN, H_CON_OUT, H_PIPE_R, H_PIPE_W, H_FILE, H_DIR, H_SOCK };
 
 struct handle {
     u8  type;
