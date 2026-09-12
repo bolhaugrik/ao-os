@@ -533,6 +533,8 @@ Ha egy változtatás bármelyik mérőszámot rontja, indokolni kell a commitban
 
 Kilépési feltétel: ugyanaz az `ao.img` bootol QEMU-ban és a netbookon, fénykép a képernyőről.
 
+**Teljesítve 2026-09-12.** QEMU: soros smoke-teszt zöld (`ao.py test`). Netbook: USB-ről indítva azonnal a natív 1366×768×32 mód (VBE 0x1D4), AO-OS felirat, prompt, helyes RGB-sorrend. Mért értékek: kernel.bin 9,3 KB, stage2.bin 1,2 KB, ao.img 8 MiB. Egy hiba került elő és javítva: a belépő assembly a BSS-ben lévő verembe mentette a bootinfo-mutatót, amit a BSS-nullázás felülírt.
+
 ### Phase 1 — Mérföldkő: saját shell (a feladatban kért első cél)
 
 1. GDT/TSS, IDT, kivétel-dump, PIC, PIT, TSC-kalibráció, PAT, panic.
