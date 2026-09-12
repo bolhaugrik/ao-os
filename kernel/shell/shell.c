@@ -134,7 +134,7 @@ static int split(char *line, char **argv)
 static void cmd_help(void)
 {
     kprintf("AO-OS parancsok:\n"
-            "  help          ez a lista\n"
+            "  help  /?  ?   ez a lista\n"
             "  mem           memoria: E820, frame-ek, heap\n"
             "  cpu           processzor: CPUID, TSC\n"
             "  disk          tarolo-vezerlok (PCI), AHCI portok\n"
@@ -219,15 +219,33 @@ static void ahci_ports(const struct pci_dev *d)
     }
 }
 
+/* AMD SB7x0/Hudson SATA (1022:7800): a BIOS IDE-modban adja at, de a vezerlo AHCI-kepes.
+ * A Linux is igy kapcsolja at (quirk_amd_ide_mode): a 0x40-es regiszter 0. bitje
+ * engedelyezi az osztalykod irasat, majd subclass=06, prog-if=01. A BAR5 mar az ABAR. */
+static bool amd_sata_to_ahci(struct pci_dev *d)
+{
+    if (d->vendor != 0x1022 || d->device != 0x7800 || d->subclass != 0x01)
+        return false;
+    u8 lock = pci_read8(d->bus, d->dev, d->fn, 0x40);
+    pci_write8(d->bus, d->dev, d->fn, 0x40, lock | 1);
+    pci_write8(d->bus, d->dev, d->fn, 0x09, 0x01);
+    pci_write8(d->bus, d->dev, d->fn, 0x0A, 0x06);
+    pci_write8(d->bus, d->dev, d->fn, 0x40, lock);
+    pci_refresh(d);
+    return d->subclass == 0x06;
+}
+
 static void cmd_disk(void)
 {
     u32 n = 0;
     for (u32 i = 0; i < pci_count(); i++) {
-        const struct pci_dev *d = pci_get(i);
+        struct pci_dev *d = pci_get_mut(i);
         if (d->class_ != 0x01) continue;
         n++;
-        kprintf("  %02x:%02x.%u  %04x:%04x  %s  irq=%u\n", d->bus, d->dev, d->fn, d->vendor, d->device,
-                pci_class_name(d->class_, d->subclass), d->irq_line);
+        kprintf("  %02x:%02x.%u  %04x:%04x  %s  prog-if=%02x  irq=%u\n", d->bus, d->dev, d->fn,
+                d->vendor, d->device, pci_class_name(d->class_, d->subclass), d->progif, d->irq_line);
+        if (d->subclass == 0x01 && amd_sata_to_ahci(d))
+            kprintf("    AMD SATA: IDE-modbol AHCI-ra kapcsolva (BAR5=0x%x)\n", d->bar[5]);
         if (d->subclass == 0x06)
             ahci_ports(d);
     }
@@ -375,7 +393,7 @@ static void execute(char *line)
     if (!argc) return;
     cmd_count++;
     const char *c = argv[0];
-    if (!strcmp(c, "help")) cmd_help();
+    if (!strcmp(c, "help") || !strcmp(c, "/?") || !strcmp(c, "?")) cmd_help();
     else if (!strcmp(c, "mem")) cmd_mem();
     else if (!strcmp(c, "cpu")) cmd_cpu();
     else if (!strcmp(c, "disk")) cmd_disk();

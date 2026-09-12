@@ -13,6 +13,31 @@ u32 pci_read32(u8 bus, u8 dev, u8 fn, u8 off)
     return inl(0xCFC);
 }
 
+u8 pci_read8(u8 bus, u8 dev, u8 fn, u8 off)
+{
+    return (pci_read32(bus, dev, fn, off) >> ((off & 3) * 8)) & 0xFF;
+}
+
+void pci_write8(u8 bus, u8 dev, u8 fn, u8 off, u8 v)
+{
+    u32 addr = 0x80000000u | ((u32)bus << 16) | ((u32)dev << 11) | ((u32)fn << 8) | (off & 0xFC);
+    outl(0xCF8, addr);
+    outb(0xCFC + (off & 3), v);
+}
+
+void pci_refresh(struct pci_dev *d)
+{
+    u8 bus = d->bus, dev = d->dev, fn = d->fn;
+    u32 cls = pci_read32(bus, dev, fn, 8);
+    d->rev = cls & 0xFF;
+    d->progif = (cls >> 8) & 0xFF;
+    d->subclass = (cls >> 16) & 0xFF;
+    d->class_ = cls >> 24;
+    if (d->header == 0)
+        for (int i = 0; i < 6; i++)
+            d->bar[i] = pci_read32(bus, dev, fn, 0x10 + i * 4);
+}
+
 static void probe(u8 bus, u8 dev, u8 fn)
 {
     u32 id = pci_read32(bus, dev, fn, 0);
@@ -53,6 +78,7 @@ void pci_init(void)
 
 u32 pci_count(void) { return ndevs; }
 const struct pci_dev *pci_get(u32 i) { return i < ndevs ? &devs[i] : NULL; }
+struct pci_dev *pci_get_mut(u32 i) { return i < ndevs ? &devs[i] : NULL; }
 
 const char *pci_class_name(u8 c, u8 s)
 {
