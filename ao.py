@@ -154,19 +154,48 @@ def cmd_test():
 
 
 def cmd_usb(dev):
+    import ctypes
     img = os.path.join(BUILD, "ao.img")
+    if not os.path.isfile(img):
+        sys.exit("nincs build/ao.img, elobb: python ao.py build")
     if not dev.startswith("\\\\.\\PhysicalDrive"):
         sys.exit("adj meg \\\\.\\PhysicalDriveN alaku eszkozt")
-    print(f"FIGYELEM: {dev} teljes tartalma felulirodik. Folytatas: 'igen'")
+    try:
+        n = int(dev[len("\\\\.\\PhysicalDrive"):])
+    except ValueError:
+        sys.exit("hibas lemezszam")
+    if n == 0:
+        sys.exit("a 0-s lemez a rendszerlemez, erre nem irok")
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        sys.exit("rendszergazdai PowerShell kell (jobb klikk -> Futtatas rendszergazdakent)")
+
+    print("Cel-lemez:")
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    f"Get-Disk -Number {n} | Format-List Number,FriendlyName,BusType,"
+                    f"@{{n='SizeGB';e={{[math]::Round($_.Size/1GB,1)}}}}"], check=False)
+    print(f"FIGYELEM: {dev} teljes tartalma felulirodik (particiok torolve). Folytatas: 'igen'")
     if input("> ").strip() != "igen":
         sys.exit("megszakitva")
+
+    # A Windows nem enged nyers irast csatolt kotetek szektoraira: elobb a
+    # particios tablat toroljuk diskpart-tal, igy nincs csatolt kotet.
+    script = f"select disk {n}\nclean\nexit\n"
+    r = subprocess.run(["diskpart"], input=script, text=True, capture_output=True)
+    if r.returncode != 0:
+        print(r.stdout)
+        sys.exit("diskpart clean sikertelen")
+
+    time.sleep(2)
+    total = 0
     with open(img, "rb") as f, open(dev, "r+b", buffering=0) as d:
         while True:
             chunk = f.read(1024 * 1024)
             if not chunk:
                 break
             d.write(chunk)
-    print("kesz")
+            total += len(chunk)
+        d.flush()
+    print(f"kesz: {total // 1024} KiB kiirva a {dev} eszkozre. Kihuzhatod, es indithatod rola a netbookot (F12).")
 
 
 def main():
