@@ -19,6 +19,7 @@
 #include "drv/blk.h"
 #include "drv/acpi.h"
 #include "drv/e1000.h"
+#include "drv/rtl8101.h"
 #include "net/net.h"
 #include "net/dhcp.h"
 #include "fs/disk.h"
@@ -152,7 +153,7 @@ void kmain(struct bootinfo *bi)
     kprintf("acpi: %s\n", acpi_init() ? "OK (poweroff elerheto)" : "nincs _S5");
 
     net_init();
-    if (e1000_init()) {
+    if (e1000_init() || rtl8101_init()) {
         const struct netdev *nd = net_dev();
         kprintf("net: %s  mac %02x:%02x:%02x:%02x:%02x:%02x\n", nd->name,
                 nd->mac[0], nd->mac[1], nd->mac[2], nd->mac[3], nd->mac[4], nd->mac[5]);
