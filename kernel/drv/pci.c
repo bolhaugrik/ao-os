@@ -25,6 +25,13 @@ void pci_write8(u8 bus, u8 dev, u8 fn, u8 off, u8 v)
     outb(0xCFC + (off & 3), v);
 }
 
+void pci_write32(u8 bus, u8 dev, u8 fn, u8 off, u32 v)
+{
+    u32 addr = 0x80000000u | ((u32)bus << 16) | ((u32)dev << 11) | ((u32)fn << 8) | (off & 0xFC);
+    outl(0xCF8, addr);
+    outl(0xCFC, v);
+}
+
 void pci_refresh(struct pci_dev *d)
 {
     u8 bus = d->bus, dev = d->dev, fn = d->fn;

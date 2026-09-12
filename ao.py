@@ -59,7 +59,11 @@ KERNEL_C = [
     "kernel/drv/console.c",
     "kernel/drv/kbd.c",
     "kernel/drv/pci.c",
+    "kernel/drv/ahci.c",
+    "kernel/drv/acpi.c",
     "kernel/fs/aofs.c",
+    "kernel/fs/aofs2.c",
+    "kernel/fs/disk.c",
     "kernel/fs/vfs.c",
     "kernel/fs/ramfs.c",
     "kernel/task/task.c",
@@ -155,6 +159,10 @@ def build():
         run([t["llvm-objcopy"], "-O", "binary", elf, os.path.join(ROOT, "rootfs", "bin", f"{prog}.aox")])
 
     print("[ramdisk]")
+    # a telepitohoz a bootloader es a kernel is a ramdiskbe kerul
+    os.makedirs(os.path.join(ROOT, "rootfs", "boot"), exist_ok=True)
+    for f in ("stage1.bin", "stage2.bin", "kernel.bin"):
+        shutil.copyfile(b(f), os.path.join(ROOT, "rootfs", "boot", f))
     run([sys.executable, "tools/mkaofs.py", "rootfs", "-o", b("ramdisk.aofs")])
 
     print("[image]")

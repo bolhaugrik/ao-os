@@ -1,4 +1,6 @@
 build/
+rootfs/bin/
+rootfs/boot/
 *.img
 *.log
 __pycache__/

@@ -19,5 +19,6 @@ struct pci_dev *pci_get_mut(u32 i);
 u32  pci_read32(u8 bus, u8 dev, u8 fn, u8 off);
 u8   pci_read8(u8 bus, u8 dev, u8 fn, u8 off);
 void pci_write8(u8 bus, u8 dev, u8 fn, u8 off, u8 v);
+void pci_write32(u8 bus, u8 dev, u8 fn, u8 off, u32 v);
 void pci_refresh(struct pci_dev *d);   /* osztaly/BAR ujraolvasasa */
 const char *pci_class_name(u8 class_, u8 subclass);

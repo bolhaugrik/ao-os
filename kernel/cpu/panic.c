@@ -5,6 +5,7 @@
 #include "../arch/io.h"
 #include "../drv/console.h"
 #include "../drv/serial.h"
+#include "../fs/disk.h"
 #include "../lib/fmt.h"
 
 static void out(char c, void *ctx)
@@ -43,6 +44,16 @@ NORETURN void panic(const char *fmt, ...)
     halt_forever();
 }
 
+/* a dump rovid valtozata a panic-tarolo szektorba (512 B) */
+static void store_dump(const char *name, struct regs *r)
+{
+    char buf[500];
+    snformat(buf, sizeof buf,
+             "KIVETEL %lu %s err=%lx rip=%lx rsp=%lx cr2=%lx rax=%lx rbx=%lx rcx=%lx rdx=%lx rsi=%lx rdi=%lx rbp=%lx",
+             r->vector, name, r->err, r->rip, r->rsp, read_cr2(), r->rax, r->rbx, r->rcx, r->rdx, r->rsi, r->rdi, r->rbp);
+    panic_store_write(buf);
+}
+
 NORETURN void panic_exception(const char *name, struct regs *r)
 {
     cli();
@@ -65,5 +76,6 @@ NORETURN void panic_exception(const char *name, struct regs *r)
     pprintf("\n*** megallas\n");
     if (console_ready())
         console_flush();
+    store_dump(name, r);
     halt_forever();
 }

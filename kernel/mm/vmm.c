@@ -45,6 +45,17 @@ void vmm_set_wc(u64 paddr, u64 size)
     flush_all();
 }
 
+void vmm_set_uc(u64 paddr, u64 size)
+{
+    u64 *pd = P2V(0x72000);
+    u64 start = paddr / (2 * MiB);
+    u64 end = (paddr + size + 2 * MiB - 1) / (2 * MiB);
+    for (u64 i = start; i < end && i < 2048; i++)
+        if (pd[i] & PTE_PS)
+            pd[i] |= PTE_PWT | (1ULL << 4);   /* PWT|PCD -> PAT index 3 = UC */
+    flush_all();
+}
+
 /* ---------------------------------------------------------------- cimterek */
 static u64 alloc_table(void)
 {

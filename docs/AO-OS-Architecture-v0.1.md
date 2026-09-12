@@ -575,6 +575,12 @@ Korábbi állapot: QEMU-ban teljesítve. A `tests/smoke.py` 12 ellenőrzése zö
 
 Kilépési feltétel: egy `agent test.cap` manifesttel indított AOX-program írni tud a `/project/src` alá, de a `/project/Makefile` írására `E_CAP`-ot kap, és ez az audit-naplóban látszik.
 
+**Állapot 2026-09-12: QEMU-ban teljesítve, HW-teszt folyamatban.** A `tests/smoke.py` négy boot-menetben 60 ellenőrzést futtat: ring 3-as taskok, 22 syscall, capability-elutasítás audit-naplóval, CPU-/határidő-limit (a `spin` programot a kernel öli meg), ramfs, AOFS v2 formázás, perzisztens írás újraindításon át, panic-tároló szektor, `install` és a telepített rendszerről bootolás. Mért értékek: kernel.bin 94 KB, ramdisk 126 KB (a telepítőhöz a bootloader és a kernel is benne van), boot → prompt 113 ms.
+
+Eltérés a tervtől: a shell **kernel-szálként** maradt (gyökér-task, minden capability-vel), nem költözött ring 3-ba. Indok: a shell parancsai kernel-belső adatokat mutatnak (E820, PCI, AHCI-portok), amelyekhez külön syscallokat kellett volna bevezetni, és a kernel-mód nem gyengíti a modellt, mert az agent-programok ring 3-ban, szűkített capability-vel futnak. A ring 3-as shell Phase 3-ban, az `agentd` mellett jöhet, ha az AI-oldal indokolja.
+
+Hardverspecifikus döntés: az AMD SATA-vezérlőt a driver IDE-módból AHCI-módba kapcsolja (Linux `quirk_amd_ide_mode`), a HBA-regisztereket UC-lapokon éri el, egyetlen porton polling-módban dolgozik, 64 KiB-os DMA-pufferrel. Két hiba került elő QEMU-ban és javítva: a HBA-regiszterek indexelése (bájt-eltolás dword-tömbben), és a ramfs útvonal-feloldó inicializálatlan szülő-mutatója hiányzó köztes könyvtárnál.
+
 ### Phase 3 — Hálózat és AI-agent
 
 1. e1000 driver (QEMU), majd RTL8101E (HW). `netdev` interfész.

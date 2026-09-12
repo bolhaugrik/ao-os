@@ -15,6 +15,10 @@
 #include "drv/console.h"
 #include "drv/kbd.h"
 #include "drv/pci.h"
+#include "drv/ahci.h"
+#include "drv/blk.h"
+#include "drv/acpi.h"
+#include "fs/disk.h"
 #include "fs/aofs.h"
 #include "fs/vfs.h"
 #include "fs/ramfs.h"
@@ -61,6 +65,7 @@ static usize gen_version(char *buf, usize cap)
 }
 
 static struct bootinfo *boot;
+struct bootinfo *boot_info;
 
 static void shell_thread(void *arg)
 {
@@ -71,6 +76,7 @@ static void shell_thread(void *arg)
 void kmain(struct bootinfo *bi)
 {
     boot = bi;
+    boot_info = bi;
     serial_init();
     sprintf_("\nAO-OS v%s kernel\n", AO_VERSION);
     if (bi->magic != BOOTINFO_MAGIC) {
@@ -119,6 +125,15 @@ void kmain(struct bootinfo *bi)
     vfs_mount("/sys", &ramfs_ops, sysfs, false);
     ramfs_add_generated(sysfs, "audit", gen_audit);
     ramfs_add_generated(sysfs, "version", gen_version);
+
+    if (ahci_init()) {
+        kprintf("ahci: port %u, %s, %lu MiB\n", ahci_port_index(), blk_model(), blk_sectors() / 2048);
+        int e = disk_mount_root();
+        if (e) kprintf("lemez: nincs AO-particio vagy AOFS v2 (install / mkfs)\n");
+    } else {
+        kprintf("ahci: nincs hasznalhato lemez (%s)\n", ahci_error());
+    }
+    kprintf("acpi: %s\n", acpi_init() ? "OK (poweroff elerheto)" : "nincs _S5");
 
     kprintf("pci: %u eszkoz   tsc: %lu MHz   kbd: i8042\n", pci_count(), tsc_hz() / 1000000);
     for (int i = 1; i < nstamp; i++)

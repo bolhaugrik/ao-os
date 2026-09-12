@@ -36,6 +36,7 @@ static struct rnode *walk(struct ramfs *fs, const char *rel, struct rnode **pare
 {
     struct rnode *cur = &fs->root;
     const char *p = rel;
+    if (parent_out) { *parent_out = NULL; *last = ""; *last_len = 0; }
     while (*p) {
         const char *start = p;
         while (*p && *p != '/') p++;
@@ -54,7 +55,6 @@ static struct rnode *walk(struct ramfs *fs, const char *rel, struct rnode **pare
         if (!cur || cur->type != 2)
             return NULL;
     }
-    if (parent_out) { *parent_out = NULL; *last = ""; *last_len = 0; }
     return cur;
 }
 

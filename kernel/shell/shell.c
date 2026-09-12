@@ -15,6 +15,10 @@
 #include "../drv/fb.h"
 #include "../fs/vfs.h"
 #include "../fs/aofs.h"
+#include "../fs/disk.h"
+#include "../drv/blk.h"
+#include "../drv/ahci.h"
+#include "../drv/acpi.h"
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "../task/task.h"
@@ -158,7 +162,8 @@ static void cmd_help(void)
             "  run prog [arg..]         AOX program ring 3-ban (gyoker-jogokkal)\n"
             "  spawn manifest prog [..] AOX program a manifest capability-keszletevel\n"
             "  ps  kill pid  caps [pid]  audit   taskok es jogosultsagok\n"
-            "  kbd [us|hu]  bench  uptime  echo  clear  crash [div|page|ud]  reboot\n"
+            "  install  mkfs  sync  lastpanic [clear]   belso lemez (AOFS v2)\n"
+            "  kbd [us|hu]  bench  uptime  echo  clear  crash [div|page|ud]  reboot  poweroff\n"
             "  Shift/PgUp/PgDn gorgetes, Ctrl+C sor torlese, Ctrl+L clear\n");
 }
 
@@ -227,21 +232,6 @@ static void ahci_ports(const struct pci_dev *d)
     }
 }
 
-/* AMD SB7x0/Hudson SATA (1022:7800): a BIOS IDE-modban adja at, de a vezerlo AHCI-kepes.
- * A Linux is igy kapcsolja at (quirk_amd_ide_mode). */
-static bool amd_sata_to_ahci(struct pci_dev *d)
-{
-    if (d->vendor != 0x1022 || d->device != 0x7800 || d->subclass != 0x01)
-        return false;
-    u8 lock = pci_read8(d->bus, d->dev, d->fn, 0x40);
-    pci_write8(d->bus, d->dev, d->fn, 0x40, lock | 1);
-    pci_write8(d->bus, d->dev, d->fn, 0x09, 0x01);
-    pci_write8(d->bus, d->dev, d->fn, 0x0A, 0x06);
-    pci_write8(d->bus, d->dev, d->fn, 0x40, lock);
-    pci_refresh(d);
-    return d->subclass == 0x06;
-}
-
 static void cmd_disk(void)
 {
     u32 n = 0;
@@ -257,8 +247,46 @@ static void cmd_disk(void)
             ahci_ports(d);
     }
     if (!n) kprintf("  nincs tarolo-vezerlo\n");
+    if (blk_present()) {
+        u64 ps, pn;
+        kprintf("lemez: %s, %lu szektor (%lu MiB)\n", blk_model(), blk_sectors(), blk_sectors() / 2048);
+        if (disk_find_partition(&ps, &pn)) kprintf("  AO-particio: LBA %lu, %lu MiB\n", ps, pn / 2048);
+        else kprintf("  nincs AO-particio (install)\n");
+    }
     kprintf("ramdisk (AOFS v1): %s, %u KiB, %u bejegyzes\n",
             aofs_mounted() ? "csatolva" : "nincs", aofs_image_size() / 1024, aofs_count());
+}
+
+static void cmd_install(bool only_mkfs)
+{
+    if (!blk_present()) { kprintf("install: nincs lemez\n"); return; }
+    kprintf("%s: a(z) '%s' lemez %s. Folytatas: ird be, hogy IGEN\n", only_mkfs ? "mkfs" : "install",
+            blk_model(), only_mkfs ? "AO-particioja formazodik" : "teljes tartalma torlodik");
+    char line[LINE_MAX];
+    read_line("> ", line);
+    if (strcmp(line, "IGEN") != 0) { kprintf("megszakitva\n"); return; }
+    int e = only_mkfs ? disk_mkfs("ao") : disk_install("ao");
+    if (e) kprintf("%s: hiba: %s\n", only_mkfs ? "mkfs" : "install", errstr(e));
+    else if (only_mkfs) { e = disk_mount_root(); if (e) kprintf("mkfs: csatolas: %s\n", errstr(e)); }
+}
+
+static void cmd_lastpanic(bool clear)
+{
+    char buf[512];
+    int n = panic_store_read(buf, sizeof buf);
+    if (!n) { kprintf("nincs mentett panic\n"); return; }
+    kprintf("utolso panic: %s\n", buf);
+    if (clear) { panic_store_clear(); kprintf("torolve\n"); }
+}
+
+static void cmd_poweroff(void)
+{
+    kprintf("kikapcsolas...\n");
+    console_flush();
+    vfs_sync();
+    if (!acpi_available()) { kprintf("poweroff: nincs ACPI _S5, hasznald a reboot-ot\n"); return; }
+    acpi_poweroff();
+    kprintf("poweroff: az ACPI nem kapcsolt ki\n");
 }
 
 static void cmd_mount(void)
@@ -349,6 +377,8 @@ static bool find_prog(const char *name, char *path)
     snformat(alt, sizeof alt, "/bin/%s", name);
     if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
     snformat(alt, sizeof alt, "/bin/%s.aox", name);
+    if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
+    snformat(alt, sizeof alt, "/rd/bin/%s.aox", name);
     if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
     return false;
 }
@@ -531,6 +561,11 @@ static void execute(char *line)
     else if (!strcmp(c, "echo")) { for (int i = 1; i < argc; i++) kprintf("%s%s", argv[i], i + 1 < argc ? " " : ""); kprintf("\n"); }
     else if (!strcmp(c, "clear")) console_clear();
     else if (!strcmp(c, "crash")) cmd_crash(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "install")) cmd_install(false);
+    else if (!strcmp(c, "mkfs")) cmd_install(true);
+    else if (!strcmp(c, "sync")) { int e = vfs_sync(); kprintf(e ? "sync: %s\n" : "sync: ok\n", errstr(e)); }
+    else if (!strcmp(c, "lastpanic")) cmd_lastpanic(argc > 1 && !strcmp(argv[1], "clear"));
+    else if (!strcmp(c, "poweroff")) cmd_poweroff();
     else if (!strcmp(c, "reboot")) cmd_reboot();
     else kprintf("ismeretlen parancs: %s (help)\n", c);
 }

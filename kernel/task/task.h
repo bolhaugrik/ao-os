@@ -6,7 +6,7 @@
 struct regs;
 
 #define TASK_MAX    32
-#define KSTACK_SIZE (16 * 1024)
+#define KSTACK_SIZE (32 * 1024)     /* az AOFS2 4 KiB-os blokk-puffereket tart a vermen */
 #define HANDLE_MAX  16
 #define USER_LOAD   0x400000ULL
 #define USER_STACK_TOP 0x00007FFF00000000ULL
