@@ -21,12 +21,17 @@ MAGIC = b"AOP1"
 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
 
 SYSTEM = """Te egy AI-agent vagy, aki egy AO-OS nevu, minimalis, sajat kernelu operacios rendszeren dolgozik
-(Acer Aspire One netbook, 1366x768 szoveges konzol). Nincs Linux, nincs shell-parancs, nincs internet:
-kizarolag a megadott eszkozokkel (fs_read, fs_write, fs_list, task_run, ask_user, done) ersz el barmit.
-A fajlrendszer utvonalai abszolutak (/project, /state, /tmp, /rd). A capability-lista mutatja, mihez
-van jogod; ha egy eszkoz E_CAP hibat ad, nincs jogosultsagod, ne probald ujra ugyanazt.
-Roviden, magyarul valaszolj. Ekezetes betuket hasznalhatsz. A feladat vegen hivd a done eszkozt
-egy rovid osszefoglaloval."""
+(Acer Aspire One netbook, 1366x768 szoveges konzol). Nincs Linux, nincs POSIX, nincs shell: nem letezik
+sh, bash, busybox, mkdir, ls, cat vagy barmilyen parancssori program. Nincs internet.
+Kizarolag a megadott eszkozokkel dolgozhatsz:
+  fs_read(path), fs_write(path, content), fs_mkdir(path), fs_list(path), task_run(program, args),
+  ask_user(question), done(summary).
+Utvonalak: abszolutak, max 127 karakter (/project, /state, /tmp, /rd). Az fs_write a hianyzo szulo
+konyvtarakat maga letrehozza. A task_run csak a /bin alatti AOX programokat inditja (pl. hello).
+A capability-lista mutatja, mihez van jogod; E_CAP = nincs jogosultsag, ezt ne probald ujra.
+Ha egy eszkoz hibat ad, olvasd el a magyarazatot, es ne ismeteld ugyanazt a hivast valtozatlanul.
+Roviden, magyarul valaszolj, ekezetes betukkel. A feladat vegen hivd a done eszkozt egy rovid
+osszefoglaloval."""
 
 TOOLS = [
     {"name": "fs_read", "description": "Fajl tartalmanak beolvasasa (max 16 KiB).",
@@ -35,6 +40,9 @@ TOOLS = [
     {"name": "fs_write", "description": "Fajl irasa (letrehozas vagy felulirasa).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
                       "required": ["path", "content"], "additionalProperties": False}, "strict": True},
+    {"name": "fs_mkdir", "description": "Konyvtar letrehozasa (a hianyzo szulokkel egyutt).",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
+                      "additionalProperties": False}, "strict": True},
     {"name": "fs_list", "description": "Konyvtar tartalmanak listazasa.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
                       "additionalProperties": False}, "strict": True},
@@ -121,9 +129,15 @@ class Session:
         except TypeError:
             return self.client.messages.stream(**kwargs)
 
+    MAX_TOOL_CALLS = 40
+
     def run_turn(self, prompt):
         self.messages.append({"role": "user", "content": prompt})
+        calls = 0
         while True:
+            if calls >= self.MAX_TOOL_CALLS:
+                send_frame(self.sock, ERR, f"tul sok eszkoz-hivas ({calls}), a feladat megszakitva")
+                return
             with self.create_stream() as stream:
                 for event in stream:
                     if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
@@ -139,6 +153,7 @@ class Session:
             tool_uses = [b for b in final.content if b.type == "tool_use"]
             results = []
             for tu in tool_uses:
+                calls += 1
                 self.log(f"tool {tu.name} {tu.input}")
                 send_frame(self.sock, TOOL_CALL, encode_tool_call(tu.id, tu.name, tu.input))
                 while True:

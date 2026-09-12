@@ -115,6 +115,43 @@ static const char *arg(struct kv *kvs, int n, const char *key)
     return "";
 }
 
+/* hibakod -> a modellnek szolo magyarazat */
+static const char *explain(int e)
+{
+    switch (e) {
+    case E_CAP: return "E_CAP: nincs jogosultsag ehhez az utvonalhoz/muvelethez (lasd a capability-listat); ne probald ujra";
+    case E_NOENT: return "E_NOENT: nincs ilyen fajl vagy konyvtar (a szulo konyvtar sem letezik? fs_mkdir-rel hozhato letre)";
+    case E_ISDIR: return "E_ISDIR: ez konyvtar, nem fajl";
+    case E_NOTDIR: return "E_NOTDIR: az utvonal egy eleme nem konyvtar";
+    case E_EXIST: return "E_EXIST: mar letezik";
+    case E_ROFS: return "E_ROFS: csak olvashato fajlrendszer (/rd, /sys)";
+    case E_LIMIT: return "E_LIMIT: eroforras-korlat";
+    case E_INVAL: return "E_INVAL: ervenytelen parameter (abszolut utvonal kell, max 127 karakter)";
+    default: return ao_errstr(e);
+    }
+}
+
+/* szulo konyvtarak letrehozasa (mkdir -p), minden lepes a cap_check-en megy at */
+static int mkdir_parents(const char *path)
+{
+    char tmp[128];
+    usize l = strlen(path);
+    if (l >= sizeof tmp) return E_INVAL;
+    memcpy(tmp, path, l + 1);
+    for (usize i = 1; i < l; i++) {
+        if (tmp[i] != '/') continue;
+        tmp[i] = 0;
+        struct stat st;
+        if (ao_stat(tmp, &st) != 0) {
+            int e = ao_mkdir(tmp);
+            if (e && e != E_EXIST) { return e; }
+            ao_printf("  [fs_mkdir %s]\n", tmp);
+        }
+        tmp[i] = '/';
+    }
+    return 0;
+}
+
 static void send_result(const char *id, bool ok, const char *text)
 {
     usize il = strlen(id), tl = strlen(text);
@@ -137,7 +174,7 @@ static void run_tool(usize len)
 
     if (strcmp(name, "fs_read") == 0) {
         int fd = ao_open(arg(kvs, n, "path"), O_READ);
-        if (fd < 0) { ao_printf("  [%s: %s -> %s]\n", name, arg(kvs, n, "path"), ao_errstr(fd)); send_result(id, false, ao_errstr(fd)); return; }
+        if (fd < 0) { ao_printf("  [%s: %s -> %s]\n", name, arg(kvs, n, "path"), ao_errstr(fd)); send_result(id, false, explain(fd)); return; }
         usize got = 0;
         for (;;) {
             isize r = ao_read(fd, buf + got, sizeof buf - 1 - got);
@@ -151,17 +188,29 @@ static void run_tool(usize len)
     } else if (strcmp(name, "fs_write") == 0) {
         const char *path = arg(kvs, n, "path");
         int fd = ao_open(path, O_WRITE | O_CREATE | O_TRUNC);
-        if (fd < 0) { ao_printf("  [fs_write %s -> %s]\n", path, ao_errstr(fd)); send_result(id, false, ao_errstr(fd)); return; }
+        if (fd == E_NOENT) {
+            int e = mkdir_parents(path);
+            if (e == 0) fd = ao_open(path, O_WRITE | O_CREATE | O_TRUNC);
+            else fd = e;
+        }
+        if (fd < 0) { ao_printf("  [fs_write %s -> %s]\n", path, ao_errstr(fd)); send_result(id, false, explain(fd)); return; }
         const char *content = arg(kvs, n, "content");
         isize w = ao_write(fd, content, strlen(content));
         ao_close(fd);
         ao_printf("  [fs_write %s: %ld bajt]\n", path, (i64)w);
-        if (w < 0) send_result(id, false, ao_errstr((int)w));
-        else send_result(id, true, "ok");
+        if (w < 0) send_result(id, false, explain((int)w));
+        else send_result(id, true, "ok, fajl irva");
+    } else if (strcmp(name, "fs_mkdir") == 0) {
+        const char *path = arg(kvs, n, "path");
+        int e = ao_mkdir(path);
+        if (e == E_NOENT) { e = mkdir_parents(path); if (e == 0) e = ao_mkdir(path); }
+        ao_printf("  [fs_mkdir %s -> %s]\n", path, e ? ao_errstr(e) : "ok");
+        if (e && e != E_EXIST) send_result(id, false, explain(e));
+        else send_result(id, true, e == E_EXIST ? "mar letezett" : "ok, konyvtar letrehozva");
     } else if (strcmp(name, "fs_list") == 0) {
         struct dirent ents[32];
         int c = ao_list(arg(kvs, n, "path"), ents, 32);
-        if (c < 0) { send_result(id, false, ao_errstr(c)); return; }
+        if (c < 0) { ao_printf("  [fs_list %s -> %s]\n", arg(kvs, n, "path"), ao_errstr(c)); send_result(id, false, explain(c)); return; }
         usize pos = 0;
         for (int i = 0; i < c && pos + 80 < sizeof buf; i++) {
             usize l = strlen(ents[i].name);
@@ -201,7 +250,10 @@ static void run_tool(usize len)
         path[pl] = 0;
         ao_printf("  [task_run %s]\n", path);
         int pid = ao_spawn(path, argv, NULL);
-        if (pid < 0) { send_result(id, false, ao_errstr(pid)); return; }
+        if (pid < 0) {
+            send_result(id, false, pid == E_NOENT ? "E_NOENT: nincs ilyen program a /bin alatt (nincs shell, sh, busybox, mkdir program; konyvtarhoz fs_mkdir)" : explain(pid));
+            return;
+        }
         int status = 0;
         ao_wait(pid, &status);
         char rc[32];
@@ -222,7 +274,7 @@ static void run_tool(usize len)
         ao_printf("\n[kesz: %s]\n", arg(kvs, n, "summary"));
         send_result(id, true, "ok");
     } else {
-        send_result(id, false, "ismeretlen eszkoz");
+        send_result(id, false, "ismeretlen eszkoz (elerheto: fs_read, fs_write, fs_mkdir, fs_list, task_run, ask_user, done)");
     }
 }
 

@@ -74,6 +74,8 @@ def handle(sock, addr):
                 send_frame(sock, DELTA, f"Makefile tiltott: {err.strip() if st != 'ok' else 'NEM TILTOTT'}. ")
                 st, listing = tool_call(sock, "t4", "fs_list", path="/project")
                 send_frame(sock, DELTA, f"lista: {listing.strip().replace(chr(10), ',')}\n")
+                st, _ = tool_call(sock, "t6", "fs_write", path="/project/src/mely/uj/a.txt", content="szulok letrehozva\n")
+                send_frame(sock, DELTA, f"mely iras: {st}\n")
                 tool_call(sock, "t5", "done", summary="kesz")
                 send_frame(sock, END, "stop=done\n")
             elif ftype == PING:

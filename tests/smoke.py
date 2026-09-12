@@ -91,6 +91,7 @@ SESSIONS = [
         ("mkdir /state/agents/coder", "AO> "),
         ("agent coder irj egy fajlt a projektbe", "lista: README.txt,src/"),
         ("cat /project/src/hello.txt", "irta az agent"),
+        ("cat /project/src/mely/uj/a.txt", "szulok letrehozva"),
         ("cat /state/agents/coder/context.txt", "## feladat"),
         ("audit", "fs.write  ELUTASITVA  /project/Makefile"),
         ("ai szia", "[kesz: kesz]"),
@@ -172,11 +173,16 @@ def echo_server():
 def main():
     t = ao.tools()
     echo_server()
-    # szimulalt AOP-hid a 9010-es porton (a vendeg 10.0.2.2:9010-en eri el)
-    bridge = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fake_bridge.py"), "9010"],
+    # szimulalt AOP-hid a 9011-es porton; a vendeg a 10.0.2.100:9010 cimen eri el (guestfwd),
+    # igy a valodi hid (9010) mellett is futhat a teszt
+    ao.QEMU_GUESTFWD = "tcp:10.0.2.100:9010-tcp:127.0.0.1:9011"
+    bridge = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fake_bridge.py"), "9011"],
                               cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     import atexit
     atexit.register(bridge.kill)
+    time.sleep(0.5)
+    if bridge.poll() is not None:
+        sys.exit("a szimulalt hid nem indult (9011-es port foglalt?)")
     # a teszt modositja a lemezkepet: masolaton dolgozunk
     img = os.path.join(ao.BUILD, "ao.img")
     test_img = os.path.join(ao.BUILD, "ao-test.img")

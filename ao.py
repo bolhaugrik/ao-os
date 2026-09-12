@@ -94,6 +94,8 @@ USER_CFLAGS = [
 ]
 
 QEMU_MEM = "2048"
+# vendeg -> host atiranyitas a QEMU user-neten (a smoke-teszt allitja): pl. "tcp:10.0.2.100:9010-tcp:127.0.0.1:9011"
+QEMU_GUESTFWD = ""
 
 
 def find_tool(name):
@@ -184,7 +186,8 @@ def qemu_cmd(t, extra):
     return [t["qemu"], "-machine", "pc", "-m", QEMU_MEM,
             "-drive", f"file={os.path.join(BUILD, 'ao.img')},format=raw,if=none,id=d0",
             "-device", "ahci,id=ahci", "-device", "ide-hd,drive=d0,bus=ahci.0",
-            "-netdev", "user,id=n0", "-device", "e1000,netdev=n0",
+            "-netdev", "user,id=n0" + (f",guestfwd={QEMU_GUESTFWD}" if QEMU_GUESTFWD else ""),
+            "-device", "e1000,netdev=n0",
             "-vga", "std", "-no-reboot", "-no-shutdown"] + extra
 
 
