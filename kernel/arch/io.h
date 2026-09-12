@@ -20,6 +20,16 @@ static inline u64 rdtsc(void) {
     return ((u64)hi << 32) | lo;
 }
 
+static inline u64 rdmsr(u32 msr) {
+    u32 lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((u64)hi << 32) | lo;
+}
+
+static inline void wrmsr(u32 msr, u64 v) {
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"((u32)v), "d"((u32)(v >> 32)));
+}
+
 static inline NORETURN void halt_forever(void) {
     for (;;) { cli(); hlt(); }
 }

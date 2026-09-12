@@ -32,11 +32,11 @@ void vformat(fmt_out_fn out, void *ctx, const char *fmt, va_list ap)
             continue;
         }
         fmt++;
-        bool zero = false;
+        bool zero = false, left = false;
         int width = 0;
         int longs = 0;
-        if (*fmt == '0') {
-            zero = true;
+        while (*fmt == '0' || *fmt == '-') {
+            if (*fmt == '0') zero = true; else left = true;
             fmt++;
         }
         while (*fmt >= '0' && *fmt <= '9')
@@ -51,10 +51,14 @@ void vformat(fmt_out_fn out, void *ctx, const char *fmt, va_list ap)
             if (!s)
                 s = "(null)";
             int len = (int)strlen(s);
-            for (int i = len; i < width; i++)
-                out(' ', ctx);
+            if (!left)
+                for (int i = len; i < width; i++)
+                    out(' ', ctx);
             while (*s)
                 out(*s++, ctx);
+            if (left)
+                for (int i = len; i < width; i++)
+                    out(' ', ctx);
             break;
         }
         case 'c':

@@ -43,10 +43,38 @@ KERNEL_C = [
     "kernel/kmain.c",
     "kernel/lib/string.c",
     "kernel/lib/fmt.c",
+    "kernel/cpu/gdt.c",
+    "kernel/cpu/idt.c",
+    "kernel/cpu/pic.c",
+    "kernel/cpu/pit.c",
+    "kernel/cpu/tsc.c",
+    "kernel/cpu/cpuid.c",
+    "kernel/cpu/panic.c",
+    "kernel/mm/pmm.c",
+    "kernel/mm/vmm.c",
+    "kernel/mm/kheap.c",
     "kernel/drv/serial.c",
     "kernel/drv/fb.c",
+    "kernel/drv/font_data.c",
+    "kernel/drv/console.c",
+    "kernel/drv/kbd.c",
+    "kernel/drv/pci.c",
+    "kernel/fs/aofs.c",
+    "kernel/shell/shell.c",
 ]
-KERNEL_ASM = ["kernel/arch/entry.asm"]
+KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm"]
+
+# AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
+USER_PROGS = ["hello"]
+USER_CFLAGS = [
+    "--target=x86_64-elf",
+    "-ffreestanding", "-fno-builtin", "-nostdlib", "-nostdinc",
+    "-fno-stack-protector", "-fpie", "-fno-plt", "-fvisibility=hidden",
+    "-fno-asynchronous-unwind-tables", "-fno-unwind-tables",
+    "-mno-red-zone", "-mno-mmx", "-mno-sse", "-mno-sse2",
+    "-O2", "-g", "-std=c11", "-Wall", "-Wextra", "-Werror",
+    "-I", os.path.join(ROOT, "user"),
+]
 
 QEMU_MEM = "2048"
 
@@ -101,15 +129,29 @@ def build():
          "-o", b("kernel.elf")] + objs)
     run([t["llvm-objcopy"], "-O", "binary", b("kernel.elf"), b("kernel.bin")])
 
+    print("[user]")
+    os.makedirs(os.path.join(ROOT, "rootfs", "bin"), exist_ok=True)
+    crt0 = b("crt0.o")
+    run([t["nasm"], "-f", "elf64", "user/crt0.asm", "-o", crt0])
+    for prog in USER_PROGS:
+        obj = b(f"user_{prog}.o")
+        run([t["clang"]] + USER_CFLAGS + ["-c", f"user/{prog}.c", "-o", obj])
+        elf = b(f"{prog}.aox.elf")
+        run([t["ld.lld"], "-T", "user/aox.ld", "-nostdlib", "-static", "--no-pie", "-z", "max-page-size=0x10",
+             "-o", elf, crt0, obj])
+        run([t["llvm-objcopy"], "-O", "binary", elf, os.path.join(ROOT, "rootfs", "bin", f"{prog}.aox")])
+
+    print("[ramdisk]")
+    run([sys.executable, "tools/mkaofs.py", "rootfs", "-o", b("ramdisk.aofs")])
+
     print("[image]")
     cmd = [sys.executable, "tools/mkimage.py", "--stage1", b("stage1.bin"), "--stage2", b("stage2.bin"),
-           "--kernel", b("kernel.bin"), "-o", b("ao.img")]
-    if os.path.isfile(b("ramdisk.aofs")):
-        cmd += ["--ramdisk", b("ramdisk.aofs")]
+           "--kernel", b("kernel.bin"), "--ramdisk", b("ramdisk.aofs"), "-o", b("ao.img")]
     run(cmd)
 
     ksize = os.path.getsize(b("kernel.bin"))
-    print(f"kernel.bin: {ksize} B   stage2.bin: {os.path.getsize(b('stage2.bin'))} B   ao.img: {os.path.getsize(b('ao.img')) // 1024} KiB")
+    print(f"kernel.bin: {ksize} B   stage2.bin: {os.path.getsize(b('stage2.bin'))} B   "
+          f"ramdisk: {os.path.getsize(b('ramdisk.aofs'))} B   ao.img: {os.path.getsize(b('ao.img')) // 1024} KiB")
 
 
 def qemu_cmd(t, extra):
@@ -127,30 +169,7 @@ def cmd_run(extra=()):
 
 def cmd_test():
     build()
-    t = tools()
-    log = os.path.join(BUILD, "serial.log")
-    if os.path.exists(log):
-        os.remove(log)
-    cmd = qemu_cmd(t, ["-display", "none", "-serial", f"file:{log}"])
-    print("  $", " ".join(cmd))
-    p = subprocess.Popen(cmd, cwd=ROOT)
-    deadline = time.time() + 15
-    text = ""
-    while time.time() < deadline:
-        time.sleep(0.5)
-        if os.path.exists(log):
-            text = open(log, "r", errors="replace").read()
-            if "phase0: kesz" in text or "AO>" in text:
-                break
-    p.kill()
-    print("---- serial ----")
-    print(text)
-    print("----------------")
-    expect = ["AO-OS v", "fb: mode=", "e820:", "phase0: kesz"]
-    missing = [e for e in expect if e not in text]
-    if missing:
-        sys.exit(f"TESZT SIKERTELEN, hianyzik: {missing}")
-    print("TESZT OK")
+    run([sys.executable, "tests/smoke.py"])
 
 
 def cmd_usb(dev):

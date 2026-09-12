@@ -558,6 +558,8 @@ AO> cat boot.txt
 
 a netbookon, billentyűzetről, 2 másodpercen belül a BIOS-átadás után.
 
+**Állapot 2026-09-12: QEMU-ban teljesítve, HW-teszt folyamatban.** A `tests/smoke.py` 12 ellenőrzése zöld (help, mem, cpu, disk, ls, cat, run hello, echo, fb, bench, uptime, crash div → kivétel-dump). Mért értékek QEMU-ban: stage2 → prompt 96 ms, kernel.bin 49 KB, ramdisk 5,4 KB, ao.img 8 MiB. Kódméret: ~4 200 sor C/asm a kernelben (font-adat nélkül). Két hiba került elő és javítva: a heap `kfree` a szabadlista-mutatóval felülírta a méretosztály-mezőt, mielőtt olvasta volna; az AOX-fájl rövidebb a `load_size`-nál, mert az objcopy a záró nullákat elhagyja.
+
 ### Phase 2 — Taskok, capability-k, írható tároló
 
 1. Ring 3: user GDT-bejegyzések, `syscall/sysret`, kernelverem-váltás, context switch, scheduler két sorral.

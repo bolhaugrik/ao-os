@@ -1,0 +1,7 @@
+AO-OS ramdisk (AOFS v1)
+
+Ez a fajl a rootfs/ konyvtarbol kerult a lemezkepbe a tools/mkaofs.py-vel,
+a stage2 tolti be 4 MiB-re, a kernel csatolja. Phase 2-ben irhato AOFS v2
+valtja fel a SATA-lemezen.
+
+Parancsok: help, ls, cat boot.txt, run hello, mem, cpu, disk, bench
