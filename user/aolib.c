@@ -38,6 +38,8 @@ int ao_unlink(const char *path) { return (int)ao_syscall(SYS_UNLINK, (u64)(uptr)
 int ao_pipe(int fds[2]) { return (int)ao_syscall(SYS_PIPE, (u64)(uptr)fds, 0, 0, 0); }
 int ao_getpid(void) { return (int)ao_syscall(SYS_GETPID, 0, 0, 0, 0); }
 u64 ao_ticks(void) { return (u64)ao_syscall(SYS_TICKS, 0, 0, 0, 0); }
+int ao_net_connect(const char *addr) { return (int)ao_syscall(SYS_NET_CONNECT, (u64)(uptr)addr, 0, 0, 0); }
+int ao_net_info(struct netinfo *ni) { return (int)ao_syscall(SYS_NET_INFO, (u64)(uptr)ni, 0, 0, 0); }
 
 void ao_puts(const char *s) { ao_write(1, s, strlen(s)); }
 

@@ -44,9 +44,9 @@ void capset_root(struct capset *cs)
 /* ---------------------------------------------------------------- glob */
 bool cap_glob(const char *p, const char *s)
 {
-    if (p[0] == '/' && p[1] == '*' && p[2] == '*' && p[3] == 0 && *s == 0)
-        return true;                           /* a "/x/ + **" minta illik "/x"-re is */
     while (*p) {
+        if (p[0] == '/' && p[1] == '*' && p[2] == '*' && p[3] == 0 && *s == 0)
+            return true;                       /* a "/x/ + **" minta magara "/x"-re is illik */
         if (p[0] == '*' && p[1] == '*') {
             p += 2;
             if (*p == '/') p++;

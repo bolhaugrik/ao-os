@@ -594,6 +594,8 @@ Hardverspecifikus döntés: az AMD SATA-vezérlőt a driver IDE-módból AHCI-m�
 
 Kilépési feltétel: a netbookon a `agent start coder "írd meg a hello.c-t"` a hídon át beszél egy AI-szolgáltatóval, a `/project/src/hello.c` létrejön, a manifest-en kívüli írás elutasítva.
 
+**Állapot 2026-09-12: QEMU-ban a teljes kör működik szimulált híddal, HW-teszt folyamatban.** Elkészült: Ethernet/ARP/IPv4/ICMP/UDP/TCP/DHCP stack (~1 100 sor), e1000 (QEMU) és RTL8101E (netbook) driver, `net_connect` syscall CAP_NET-tel, AOP v1 keretezés (`docs/AOP.md`), `tools/bridge.py` az Anthropic SDK-val (`claude-opus-5`, streamelt válasz, hat eszköz), `agentd` ring 3-as agent-futtató, `ai` és `agent NÉV` parancsok, manifestek (`/etc/agents/chat.cap`, `coder.cap`). A `tests/fake_bridge.py` API-kulcs nélkül játssza el a hidat: a smoke-teszt 4. menetében a coder-agent a `/project/src` alá ír, a `Makefile` írására `E_CAP`-ot kap vissza a modell, a kontextus a `/state/agents/coder/context.txt`-be mentődik. Tervmódosítás: külön `aisvc` task helyett az `agentd` maga beszél a híddal a manifest `net` capability-jével, így minden eszköz-hívás közvetlenül a kernel `cap_check`-jén megy át, IPC-réteg nélkül. A PSK-titkosítás (3.1) még hátravan.
+
 ### Phase 4 (kitekintés, nem tervezett részletesen)
 
 Osztott konzol (agent-napló + shell), USB-Ethernet, SMP-kísérlet, csak-olvasó FAT az adatcseréhez, lokális apró modell kísérlet.

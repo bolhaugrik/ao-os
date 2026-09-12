@@ -83,11 +83,17 @@ SESSIONS = [
         ("cat /sys/version", "AO-OS 0.1-phase2"),
         ("reboot", ""),
     ],
-    [   # 4. menet: perzisztencia a telepitett rendszeren
+    [   # 4. menet: perzisztencia a telepitett rendszeren + AI-agent a szimulalt hiddal
         ("cat /state/x.txt", "telepites utan"),
         ("cat /project/README.txt", "agent projekt"),
         ("ls /project/src", "(ures)"),
         ("run captest\n", "rc=0"),
+        ("mkdir /state/agents/coder", "AO> "),
+        ("agent coder irj egy fajlt a projektbe", "lista: README.txt,src/"),
+        ("cat /project/src/hello.txt", "irta az agent"),
+        ("cat /state/agents/coder/context.txt", "## feladat"),
+        ("audit", "fs.write  ELUTASITVA  /project/Makefile"),
+        ("ai szia", "[kesz: kesz]"),
     ],
 ]
 
@@ -161,6 +167,11 @@ def echo_server():
 def main():
     t = ao.tools()
     echo_server()
+    # szimulalt AOP-hid a 9010-es porton (a vendeg 10.0.2.2:9010-en eri el)
+    bridge = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fake_bridge.py"), "9010"],
+                              cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import atexit
+    atexit.register(bridge.kill)
     # a teszt modositja a lemezkepet: masolaton dolgozunk
     img = os.path.join(ao.BUILD, "ao.img")
     test_img = os.path.join(ao.BUILD, "ao-test.img")

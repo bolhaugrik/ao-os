@@ -1,0 +1,15 @@
+# kodolo agent: a /project ala dolgozik, csak a src-be irhat
+agent coder
+console
+net       *:9010
+fs.read   /etc/ai/**
+fs.read   /state/ai/**
+fs.read   /state/agents/coder/**
+fs.write  /state/agents/coder/**
+fs.read   /project/**
+fs.write  /project/src/**
+exec      /bin/**
+spawn
+mem       16M
+cpu       120s
+deadline  1800s

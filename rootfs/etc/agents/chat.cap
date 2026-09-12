@@ -1,0 +1,8 @@
+# egyszeri kerdes: csak konzol es a hid
+agent chat
+console
+net       *:9010
+fs.read   /etc/ai/**
+fs.read   /state/ai/**
+mem       8M
+deadline  600s

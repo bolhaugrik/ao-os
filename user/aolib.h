@@ -24,6 +24,8 @@ int   ao_unlink(const char *path);
 int   ao_pipe(int fds[2]);
 int   ao_getpid(void);
 u64   ao_ticks(void);
+int   ao_net_connect(const char *addr);   /* "ip:port" -> fd */
+int   ao_net_info(struct netinfo *ni);
 
 void  ao_puts(const char *s);
 int   ao_printf(const char *fmt, ...);
@@ -35,3 +37,4 @@ usize strlen(const char *s);
 int   strcmp(const char *a, const char *b);
 void *memcpy(void *d, const void *s, usize n);
 void *memset(void *d, int c, usize n);
+int   memcmp(const void *a, const void *b, usize n);

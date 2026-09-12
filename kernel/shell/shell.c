@@ -167,6 +167,8 @@ static void cmd_help(void)
             "  ps  kill pid  caps [pid]  audit   taskok es jogosultsagok\n"
             "  install  mkfs  sync  lastpanic [clear]   belso lemez (AOFS v2)\n"
             "  net  dhcp  ip CIM MASZK [GW]  ping CIM  nc CIM PORT [szoveg]   halozat\n"
+            "  ai KERDES            egyszeri kerdes az AI-nak (chat agent, hid: /state/ai/bridge)\n"
+            "  agent NEV FELADAT    agent inditasa a NEV.cap manifesttel (/state/agents, /etc/agents)\n"
             "  kbd [us|hu]  bench  uptime  echo  clear  crash [div|page|ud]  reboot  poweroff\n"
             "  Shift/PgUp/PgDn gorgetes, Ctrl+C sor torlese, Ctrl+L clear\n");
 }
@@ -509,6 +511,31 @@ static void cmd_spawn(int argc, char **argv)
     run_with_caps(&cs, argc - 2, argv + 2);
 }
 
+/* ai SZOVEG  -> chat-agent;  agent NEV SZOVEG -> /state/agents/NEV.cap vagy /etc/agents/NEV.cap */
+static void cmd_agent(const char *name, int argc, char **argv, int first)
+{
+    if (first >= argc) { kprintf("hasznalat: ai KERDES  |  agent NEV FELADAT\n"); return; }
+    char mpath[VFS_PATH_MAX];
+    struct stat st;
+    snformat(mpath, sizeof mpath, "/state/agents/%s.cap", name);
+    if (vfs_stat(mpath, &st) != 0) snformat(mpath, sizeof mpath, "/etc/agents/%s.cap", name);
+    if (vfs_stat(mpath, &st) != 0) { kprintf("agent: nincs manifest: %s\n", mpath); return; }
+    void *text;
+    usize len;
+    int e = vfs_read_all(mpath, &text, &len);
+    if (e) { kprintf("agent: %s: %s\n", mpath, errstr(e)); return; }
+    struct capset cs;
+    char err[64];
+    bool ok = capset_parse(&cs, text, len, err, sizeof err);
+    kfree(text);
+    if (!ok) { kprintf("agent: manifest hiba: %s\n", err); return; }
+    char *args[ARGV_MAX + 1];
+    int n = 0;
+    args[n++] = "agentd";
+    for (int i = first; i < argc && n < ARGV_MAX; i++) args[n++] = argv[i];
+    run_with_caps(&cs, n, args);
+}
+
 static void cmd_ps(void)
 {
     task_reap_orphans();
@@ -625,6 +652,8 @@ static void execute(char *line)
     else if (!strcmp(c, "pwd")) kprintf("%s\n", cwd());
     else if (!strcmp(c, "run")) { if (argc > 1) cmd_run(argc, argv); else kprintf("run: programnev kell\n"); }
     else if (!strcmp(c, "spawn")) cmd_spawn(argc, argv);
+    else if (!strcmp(c, "ai")) cmd_agent("chat", argc, argv, 1);
+    else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
     else if (!strcmp(c, "ps")) cmd_ps();
     else if (!strcmp(c, "kill")) {
         u32 pid = 0;
