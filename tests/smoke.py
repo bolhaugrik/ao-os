@@ -94,6 +94,11 @@ SESSIONS = [
         ("cat /state/agents/coder/context.txt", "## feladat"),
         ("audit", "fs.write  ELUTASITVA  /project/Makefile"),
         ("ai szia", "[kesz: kesz]"),
+        ("update", "IGEN"),
+        ("IGEN", "update: kesz"),
+        ("cat /state/x.txt", "telepites utan"),
+        ("cat /project/src/hello.txt", "irta az agent"),
+        ("echo árvíztűrő", "árvíztűrő"),
     ],
 ]
 

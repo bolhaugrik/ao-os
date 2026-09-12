@@ -189,7 +189,7 @@ static void cmd_help(void)
             "  run prog [arg..]         AOX program ring 3-ban (gyoker-jogokkal)\n"
             "  spawn manifest prog [..] AOX program a manifest capability-keszletevel\n"
             "  ps  kill pid  caps [pid]  audit   taskok es jogosultsagok\n"
-            "  install  mkfs  sync  lastpanic [clear]   belso lemez (AOFS v2)\n"
+            "  install  update  mkfs  sync  lastpanic [clear]   belso lemez (AOFS v2)\n"
             "  net  dhcp  ip CIM MASZK [GW]  ping CIM  nc CIM PORT [szoveg]   halozat\n"
             "  ai KERDES            egyszeri kerdes az AI-nak (chat agent, hid: /state/ai/bridge)\n"
             "  agent NEV FELADAT    agent inditasa a NEV.cap manifesttel (/state/agents, /etc/agents)\n"
@@ -373,6 +373,17 @@ static void cmd_nc(int argc, char **argv)
     }
     tcp_close(s);
     kprintf("\nnc: zarva\n");
+}
+
+static void cmd_update(void)
+{
+    if (!blk_present()) { kprintf("update: nincs lemez\n"); return; }
+    kprintf("update: a bootloader, a kernel es a programok frissulnek a belso lemezen, a /state megmarad. Folytatas: IGEN\n");
+    char line[LINE_MAX];
+    read_line("> ", line);
+    if (strcmp(line, "IGEN") != 0) { kprintf("megszakitva\n"); return; }
+    int e = disk_update();
+    if (e) kprintf("update: hiba: %s\n", errstr(e));
 }
 
 static void cmd_lastpanic(bool clear)
@@ -700,6 +711,7 @@ static void execute(char *line)
     else if (!strcmp(c, "nc")) cmd_nc(argc, argv);
     else if (!strcmp(c, "install")) cmd_install(false);
     else if (!strcmp(c, "mkfs")) cmd_install(true);
+    else if (!strcmp(c, "update")) cmd_update();
     else if (!strcmp(c, "sync")) { int e = vfs_sync(); kprintf(e ? "sync: %s\n" : "sync: ok\n", errstr(e)); }
     else if (!strcmp(c, "lastpanic")) cmd_lastpanic(argc > 1 && !strcmp(argv[1], "clear"));
     else if (!strcmp(c, "poweroff")) cmd_poweroff();

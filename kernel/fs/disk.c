@@ -105,6 +105,18 @@ int disk_mkfs(const char *label)
 
 int disk_install(const char *label)
 {
+    return disk_install_ex(label, false);
+}
+
+int disk_update(void)
+{
+    return disk_install_ex(NULL, true);
+}
+
+/* keep_fs: nincs formazas, a particio es a /state megmarad; a boot-terulet es a
+ * ramdisk fajljai (bin/, etc/) felulirodnak */
+int disk_install_ex(const char *label, bool keep_fs)
+{
     if (!blk_present()) return E_IO;
     void *s1, *s2, *kern;
     usize s1n, s2n, kn;
@@ -122,12 +134,19 @@ int disk_install(const char *label)
     u32 r_sect = (boot_info->ramdisk_size + 511) / 512;
     if (r_lba + r_sect >= PANIC_LBA) { kfree(s1); kfree(s2); kfree(kern); kprintf("install: kernel+ramdisk nem fer a foglalt teruletre\n"); return E_LIMIT; }
 
-    kprintf("install: lemez '%s', %lu MiB, particio LBA %u (%lu MiB)\n", blk_model(), total / 2048, PART_LBA, psect / 2048);
+    kprintf("%s: lemez '%s', %lu MiB, particio LBA %u (%lu MiB)\n", keep_fs ? "update" : "install",
+            blk_model(), total / 2048, PART_LBA, psect / 2048);
 
-    /* 1. particio formazasa */
-    kprintf("install: AOFS v2 formazas...\n");
-    e = aofs2_mkfs(PART_LBA, psect, label);
-    if (e) { kfree(s1); kfree(s2); kfree(kern); return e; }
+    /* 1. particio formazasa (update-nel kihagyva) */
+    if (!keep_fs) {
+        kprintf("install: AOFS v2 formazas...\n");
+        e = aofs2_mkfs(PART_LBA, psect, label);
+        if (e) { kfree(s1); kfree(s2); kfree(kern); return e; }
+    } else {
+        u64 ps, pn;
+        if (!disk_find_partition(&ps, &pn)) { kfree(s1); kfree(s2); kfree(kern); kprintf("update: nincs AO-particio, hasznald az install-t\n"); return E_NOENT; }
+        vfs_sync();
+    }
 
     /* 2. stage2 fejlec: kernel/ramdisk LBA */
     u8 *st2 = kmalloc(63 * 512);
@@ -165,16 +184,19 @@ int disk_install(const char *label)
     blk_flush();
 
     /* 4. csatolas es a ramdisk tartalmanak masolasa */
-    kprintf("install: fajlok masolasa...\n");
-    e = disk_mount_root();
-    if (e) goto out;
+    kprintf("%s: fajlok masolasa...\n", keep_fs ? "update" : "install");
+    if (!keep_fs || !aofs_mounted() || vfs_mount_at(0) == NULL || strcmp(vfs_mount_at(0)->ops->name, "aofs2") != 0) {
+        e = disk_mount_root();
+        if (e) goto out;
+    }
     e = copy_tree("/rd", "/");
     if (e) goto out;
     vfs_mkdir("/state");
     vfs_mkdir("/state/agents");
     vfs_mkdir("/project");
     vfs_sync();
-    kprintf("install: kesz. Kihuzhatod a pendrive-ot, a gep a belso lemezrol indul.\n");
+    if (keep_fs) kprintf("update: kesz. Inditsd ujra a gepet (reboot).\n");
+    else kprintf("install: kesz. Kihuzhatod a pendrive-ot, a gep a belso lemezrol indul.\n");
 out:
     kfree(kpad);
     kfree(st2);

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """AO-OS AI-hid: AOP v1 a netbook fele, Claude API (Anthropic SDK) a masik oldalon.
 
-  python tools/bridge.py [--port 9010] [--model claude-opus-5]
+  python tools/bridge.py [--port 9010] [--model claude-sonnet-5] [--effort low|medium|high]
+
+Alapertelmezes: claude-sonnet-5, kozepes erofeszites (gyors valasz, alacsony koltseg).
+Megjegyzes: a "fast mode" csak az Opus-modelleken elerheto, a Sonneten nincs ilyen kapcsolo.
 
 A kulcsot az ANTHROPIC_API_KEY kornyezeti valtozobol (vagy az `ant auth login` profilbol)
 veszi az SDK. Protokoll: docs/AOP.md."""
@@ -95,10 +98,11 @@ def parse_tool_result(payload):
 
 # ---------------------------------------------------------------- egy kapcsolat
 class Session:
-    def __init__(self, sock, addr, model):
+    def __init__(self, sock, addr, model, effort):
         self.sock = sock
         self.addr = addr
         self.model = model
+        self.effort = effort
         self.client = anthropic.Anthropic()
         self.messages = []
         self.context = ""
@@ -109,7 +113,8 @@ class Session:
 
     def create_stream(self):
         kwargs = dict(model=self.model, max_tokens=16000, system=SYSTEM + "\n\n" + self.context,
-                      tools=TOOLS, messages=self.messages)
+                      tools=TOOLS, messages=self.messages,
+                      output_config={"effort": self.effort})
         try:
             return self.client.beta.messages.stream(betas=["server-side-fallback-2026-07-01"],
                                                     fallbacks="default", **kwargs)
@@ -191,7 +196,8 @@ class Session:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=9010)
-    ap.add_argument("--model", default=os.environ.get("AO_MODEL", "claude-opus-5"))
+    ap.add_argument("--model", default=os.environ.get("AO_MODEL", "claude-sonnet-5"))
+    ap.add_argument("--effort", default=os.environ.get("AO_EFFORT", "medium"), choices=["low", "medium", "high"])
     a = ap.parse_args()
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         print("figyelem: nincs ANTHROPIC_API_KEY; az SDK az `ant auth login` profilt probalja", flush=True)
@@ -199,10 +205,10 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", a.port))
     srv.listen(4)
-    print(f"AO-OS hid: 0.0.0.0:{a.port}, modell {a.model}", flush=True)
+    print(f"AO-OS hid: 0.0.0.0:{a.port}, modell {a.model}, erofeszites {a.effort}", flush=True)
     while True:
         conn, addr = srv.accept()
-        threading.Thread(target=Session(conn, addr, a.model).serve, daemon=True).start()
+        threading.Thread(target=Session(conn, addr, a.model, a.effort).serve, daemon=True).start()
 
 
 if __name__ == "__main__":
