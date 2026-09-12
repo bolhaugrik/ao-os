@@ -1,5 +1,5 @@
 /* AO-OS kernel belepes. Sorrend: soros -> GDT/IDT/PIC/PIT -> PMM -> PAT/WC -> konzol
- * -> heap -> TSC -> billentyuzet -> PCI -> ramdisk -> shell. */
+ * -> heap -> TSC -> billentyuzet -> PCI -> VFS (ramdisk, /tmp, /sys) -> taskok -> shell. */
 #include "types.h"
 #include "bootinfo.h"
 #include "layout.h"
@@ -16,13 +16,18 @@
 #include "drv/kbd.h"
 #include "drv/pci.h"
 #include "fs/aofs.h"
+#include "fs/vfs.h"
+#include "fs/ramfs.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/kheap.h"
+#include "task/task.h"
+#include "cap/cap.h"
 #include "shell/shell.h"
 #include "lib/fmt.h"
+#include "lib/string.h"
 
-#define AO_VERSION "0.1-phase1"
+#define AO_VERSION "0.1-phase2"
 
 static void serial_out(char c, void *ctx) { (void)ctx; serial_putc(c); }
 static void sprintf_(const char *fmt, ...)
@@ -38,8 +43,34 @@ static const char *stamp_name[8];
 static int nstamp;
 static void mark(const char *name) { if (nstamp < 8) { stamp[nstamp] = rdtsc(); stamp_name[nstamp++] = name; } }
 
+/* /sys/audit: az elutasitott capability-ellenorzesek */
+static usize gen_audit(char *buf, usize cap)
+{
+    usize n = 0;
+    for (u32 i = 0; i < audit_count(); i++) {
+        const struct audit_entry *e = audit_get(i);
+        n += snformat(buf + n, cap > n ? cap - n : 0, "%lu pid=%u %s %s %s\n", e->tick, e->pid,
+                      cap_kind_name(e->kind), e->allowed ? "ok" : "deny", e->resource);
+    }
+    return n;
+}
+
+static usize gen_version(char *buf, usize cap)
+{
+    return snformat(buf, cap, "AO-OS %s\n", AO_VERSION);
+}
+
+static struct bootinfo *boot;
+
+static void shell_thread(void *arg)
+{
+    (void)arg;
+    shell_run(boot);
+}
+
 void kmain(struct bootinfo *bi)
 {
+    boot = bi;
     serial_init();
     sprintf_("\nAO-OS v%s kernel\n", AO_VERSION);
     if (bi->magic != BOOTINFO_MAGIC) {
@@ -74,15 +105,28 @@ void kmain(struct bootinfo *bi)
     pci_init();
     mark("drv");
 
-    if (bi->ramdisk_size && aofs_mount(P2V(bi->ramdisk_paddr), bi->ramdisk_size))
-        kprintf("ramdisk: AOFS v1, %u bejegyzes, %u KiB\n", aofs_count(), bi->ramdisk_size / 1024);
-    else
+    /* nevter: / = ramdisk (AOFS v1, ro), /tmp = ramfs, /sys = ramfs + szintetikus fajlok */
+    vfs_init();
+    if (bi->ramdisk_size && aofs_mount(P2V(bi->ramdisk_paddr), bi->ramdisk_size)) {
+        vfs_mount("/", &aofs1_ops, NULL, true);
+        kprintf("ramdisk: AOFS v1, %u bejegyzes, %u KiB, csatolva: /\n", aofs_count(), bi->ramdisk_size / 1024);
+    } else {
         kprintf("ramdisk: nincs\n");
+    }
+    void *tmpfs = ramfs_create();
+    vfs_mount("/tmp", &ramfs_ops, tmpfs, false);
+    void *sysfs = ramfs_create();
+    vfs_mount("/sys", &ramfs_ops, sysfs, false);
+    ramfs_add_generated(sysfs, "audit", gen_audit);
+    ramfs_add_generated(sysfs, "version", gen_version);
+
     kprintf("pci: %u eszkoz   tsc: %lu MHz   kbd: i8042\n", pci_count(), tsc_hz() / 1000000);
     for (int i = 1; i < nstamp; i++)
         kprintf("  %-8s +%lu us\n", stamp_name[i], tsc_to_us(stamp[i] - stamp[i - 1]));
     kprintf("\n");
     console_flush();
 
-    shell_run(bi);
+    task_init();
+    task_create_kernel("shell", shell_thread, NULL);
+    task_idle_loop();
 }

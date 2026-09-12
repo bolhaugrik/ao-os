@@ -1,0 +1,4 @@
+agent spinner
+console
+cpu       1s
+deadline  3s

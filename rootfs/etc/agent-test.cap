@@ -1,0 +1,10 @@
+# AO-OS agent manifest - captest
+agent tester
+console
+fs.read   /tmp/project/**
+fs.write  /tmp/project/src/**
+fs.read   /sys/**
+exec      /bin/**
+mem       4M
+cpu       5s
+deadline  30s

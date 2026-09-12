@@ -4,6 +4,7 @@
 #include "../cpu/idt.h"
 #include "../cpu/pic.h"
 #include "../cpu/pit.h"
+#include "../task/task.h"
 #include "../lib/string.h"
 
 #define KBD_DATA 0x60
@@ -96,6 +97,8 @@ static const struct keymap map_hu = {
 
 static const struct keymap *layouts[2] = { &map_us, &map_hu };
 
+static struct waitq kbd_q;
+
 static void push(u16 code)
 {
     u32 next = (rhead + 1) % RING;
@@ -105,6 +108,13 @@ static void push(u16 code)
     ring[rhead].mods = mods;
     ring[rhead].tsc = rdtsc();
     rhead = next;
+    waitq_wake_all(&kbd_q);
+}
+
+void kbd_tick(void)
+{
+    if (serial_has_input() && kbd_q.head)
+        waitq_wake_all(&kbd_q);
 }
 
 static void kbd_irq(struct regs *r)
@@ -269,7 +279,12 @@ void kbd_wait(struct key_event *ev)
             return;
         if (serial_key(ev))
             return;
-        idle_enter();
+        if (task_current()) {
+            if (task_current()->killed) { ev->code = 0; ev->mods = 0; ev->tsc = rdtsc(); return; }
+            task_block_on(&kbd_q);
+        } else {
+            idle_enter();
+        }
     }
 }
 

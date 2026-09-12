@@ -3,6 +3,8 @@
 #include "idt.h"
 #include "pic.h"
 #include "../arch/io.h"
+#include "../task/task.h"
+#include "../drv/kbd.h"
 
 static volatile u64 ticks;
 static volatile u64 idle_ticks;
@@ -14,6 +16,10 @@ static void pit_irq(struct regs *r)
     ticks++;
     if (in_idle)
         idle_ticks++;
+    if (task_current()) {
+        kbd_tick();
+        task_tick();
+    }
 }
 
 void pit_init(void)

@@ -23,5 +23,6 @@ struct key_event {
 void kbd_init(void);
 bool kbd_poll(struct key_event *ev);      /* nem blokkol */
 void kbd_wait(struct key_event *ev);      /* blokkol, hlt-vel; soros bemenetet is figyel */
+void kbd_tick(void);                      /* PIT-bol: soros bemenet figyelese, ebresztes */
 void kbd_set_layout(const char *name);    /* "us" vagy "hu" */
 const char *kbd_layout(void);

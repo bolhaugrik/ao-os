@@ -42,6 +42,8 @@ isr_common:
     mov rdi, rsp
     cld
     call isr_dispatch
+global isr_return
+isr_return:
     pop r15
     pop r14
     pop r13

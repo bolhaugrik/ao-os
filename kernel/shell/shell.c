@@ -1,9 +1,9 @@
-/* AO-OS shell, Phase 1: kernel-modu, line editor elozmennyel, beepitett parancsok.
- * A parancsok egy "syscall alaku" belso API-t hivnak, hogy Phase 2-ben ring 3-ba
- * koltoztetheto legyen. */
+/* AO-OS shell, Phase 2: kernel-szalkent fut (gyoker-task, minden capability-vel),
+ * a programokat ring 3-as taskkent inditja a VFS-bol, capability-keszlettel. */
 #include "shell.h"
 #include "layout.h"
 #include "aox.h"
+#include "syscall.h"
 #include "../arch/io.h"
 #include "../cpu/cpuid.h"
 #include "../cpu/pit.h"
@@ -13,19 +13,22 @@
 #include "../drv/kbd.h"
 #include "../drv/pci.h"
 #include "../drv/fb.h"
+#include "../fs/vfs.h"
 #include "../fs/aofs.h"
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
+#include "../task/task.h"
+#include "../cap/cap.h"
 #include "../lib/fmt.h"
 #include "../lib/string.h"
 
 #define LINE_MAX 256
 #define HIST_MAX 64
-#define ARGV_MAX 8
+#define ARGV_MAX 12
 
 static const struct bootinfo *boot;
 static char history[HIST_MAX][LINE_MAX];
-static u32 hist_count, hist_pos;
+static u32 hist_count;
 static u64 boot_to_prompt_us, last_key_us;
 static u32 cmd_count;
 
@@ -45,9 +48,31 @@ int kprintf(const char *fmt, ...)
     return 0;
 }
 
+static const char *errstr(int e)
+{
+    switch (e) {
+    case E_OK: return "ok";
+    case E_INVAL: return "ervenytelen";
+    case E_NOENT: return "nincs ilyen";
+    case E_CAP: return "nincs jogosultsag (E_CAP)";
+    case E_NOMEM: return "nincs memoria";
+    case E_BADF: return "rossz handle";
+    case E_CHILD: return "nincs gyerek";
+    case E_PIPE: return "pipe zarva";
+    case E_NOSYS: return "nincs ilyen hivas";
+    case E_TIMEOUT: return "hatarido/kill";
+    case E_EXIST: return "mar letezik";
+    case E_NOTDIR: return "nem konyvtar";
+    case E_ISDIR: return "konyvtar";
+    case E_LIMIT: return "limit";
+    case E_IO: return "I/O hiba";
+    case E_ROFS: return "csak olvashato";
+    case E_BUSY: return "foglalt";
+    default: return "hiba";
+    }
+}
+
 /* ---------------------------------------------------------------- line editor */
-/* A sort minden billentyu utan ujrarajzoljuk (prompt + puffer), majd a konzol-kurzort
- * a beszurasi pontra allitjuk. Egy sorra korlatozva (LINE_MAX < oszlopszam). */
 static void redraw_line(const char *prompt, const char *line, u32 cur)
 {
     kprintf("\r\x1b[K%s%s", prompt, line);
@@ -65,23 +90,16 @@ static void read_line(const char *prompt, char *line)
     for (;;) {
         struct key_event ev;
         kbd_wait(&ev);
-        u64 now = rdtsc();
-        last_key_us = tsc_to_us(now - ev.tsc);
+        last_key_us = tsc_to_us(rdtsc() - ev.tsc);
         u16 k = ev.code;
         if (k == '\n') {
             kprintf("\n");
             console_flush();
             break;
         } else if (k == '\b') {
-            if (cur > 0) {
-                memmove(line + cur - 1, line + cur, len - cur + 1);
-                len--; cur--;
-            }
+            if (cur > 0) { memmove(line + cur - 1, line + cur, len - cur + 1); len--; cur--; }
         } else if (k == KEY_DEL) {
-            if (cur < len) {
-                memmove(line + cur, line + cur + 1, len - cur);
-                len--;
-            }
+            if (cur < len) { memmove(line + cur, line + cur + 1, len - cur); len--; }
         } else if (k == KEY_LEFT) { if (cur) cur--; }
         else if (k == KEY_RIGHT) { if (cur < len) cur++; }
         else if (k == KEY_HOME) { cur = 0; }
@@ -96,16 +114,9 @@ static void read_line(const char *prompt, char *line)
             }
         } else if (k == KEY_PGUP) { console_scroll_view((int)console_rows() / 2); console_flush(); continue; }
         else if (k == KEY_PGDN) { console_scroll_view(-(int)console_rows() / 2); console_flush(); continue; }
-        else if (k == 3) {          /* Ctrl+C */
-            kprintf("^C\n");
-            line[0] = 0;
-            len = cur = 0;
-            kprintf("%s", prompt);
-        } else if (k == 12) {       /* Ctrl+L */
-            console_clear();
-            kprintf("%s%s", prompt, line);
-        } else if (k < 0x100 && k >= 32 && len < LINE_MAX - 1 &&
-                   (u32)strlen(prompt) + len + 1 < console_cols()) {
+        else if (k == 3) { kprintf("^C\n"); line[0] = 0; len = cur = 0; kprintf("%s", prompt); }
+        else if (k == 12) { console_clear(); kprintf("%s%s", prompt, line); }
+        else if (k < 0x100 && k >= 32 && len < LINE_MAX - 1 && (u32)strlen(prompt) + len + 1 < console_cols()) {
             memmove(line + cur + 1, line + cur, len - cur + 1);
             line[cur] = (char)k;
             len++; cur++;
@@ -130,26 +141,24 @@ static int split(char *line, char **argv)
     return argc;
 }
 
+static const char *cwd(void) { return task_current()->cwd; }
+
+static bool canon(const char *in, char *out)
+{
+    return vfs_canon(cwd(), in, out, VFS_PATH_MAX);
+}
+
 /* ---------------------------------------------------------------- parancsok */
 static void cmd_help(void)
 {
     kprintf("AO-OS parancsok:\n"
-            "  help  /?  ?   ez a lista\n"
-            "  mem           memoria: E820, frame-ek, heap\n"
-            "  cpu           processzor: CPUID, TSC\n"
-            "  disk          tarolo-vezerlok (PCI), AHCI portok\n"
-            "  pci           minden PCI-eszkoz\n"
-            "  ls [dir]      ramdisk tartalma\n"
-            "  cat file      fajl kiirasa\n"
-            "  run file      AOX program futtatasa\n"
-            "  fb            framebuffer adatai\n"
-            "  kbd [us|hu]   billentyuzetkiosztas\n"
-            "  bench         merőszamok\n"
-            "  uptime        ido a boot ota\n"
-            "  echo ...      szoveg\n"
-            "  clear         kepernyo torlese\n"
-            "  crash [div|page|ud]  szandekos kivetel\n"
-            "  reboot        ujrainditas\n"
+            "  help  /?  ?      ez a lista\n"
+            "  mem cpu disk pci fb   rendszerinfo\n"
+            "  ls [dir]  cat f  write f szoveg  rm f  mkdir d  cd d  pwd  mount\n"
+            "  run prog [arg..]         AOX program ring 3-ban (gyoker-jogokkal)\n"
+            "  spawn manifest prog [..] AOX program a manifest capability-keszletevel\n"
+            "  ps  kill pid  caps [pid]  audit   taskok es jogosultsagok\n"
+            "  kbd [us|hu]  bench  uptime  echo  clear  crash [div|page|ud]  reboot\n"
             "  Shift/PgUp/PgDn gorgetes, Ctrl+C sor torlese, Ctrl+L clear\n");
 }
 
@@ -211,17 +220,15 @@ static void ahci_ports(const struct pci_dev *d)
         u32 ssts = port[0x28 / 4], sig = port[0x24 / 4];
         u32 det = ssts & 0xF, spd = (ssts >> 4) & 0xF;
         const char *what = "nincs eszkoz";
-        if (det == 3) {
+        if (det == 3)
             what = sig == 0x00000101 ? "SATA lemez" : sig == 0xEB140101 ? "ATAPI" :
                    sig == 0xC33C0101 ? "enclosure" : sig == 0x96690101 ? "port multiplier" : "ismeretlen";
-        }
         kprintf("    port %u: det=%u spd=%u sig=0x%08x  %s\n", p, det, spd, sig, what);
     }
 }
 
 /* AMD SB7x0/Hudson SATA (1022:7800): a BIOS IDE-modban adja at, de a vezerlo AHCI-kepes.
- * A Linux is igy kapcsolja at (quirk_amd_ide_mode): a 0x40-es regiszter 0. bitje
- * engedelyezi az osztalykod irasat, majd subclass=06, prog-if=01. A BAR5 mar az ABAR. */
+ * A Linux is igy kapcsolja at (quirk_amd_ide_mode). */
 static bool amd_sata_to_ahci(struct pci_dev *d)
 {
     if (d->vendor != 0x1022 || d->device != 0x7800 || d->subclass != 0x01)
@@ -254,84 +261,185 @@ static void cmd_disk(void)
             aofs_mounted() ? "csatolva" : "nincs", aofs_image_size() / 1024, aofs_count());
 }
 
-static void cmd_ls(const char *dir)
+static void cmd_mount(void)
 {
-    char prefix[96];
-    const char *d = dir ? dir : "";
-    while (*d == '/') d++;
-    strlcpy(prefix, d, sizeof prefix);
-    usize pl = strlen(prefix);
-    if (pl && prefix[pl - 1] != '/') { prefix[pl++] = '/'; prefix[pl] = 0; }
-    u32 n = 0;
-    for (u32 i = 0; i < aofs_count(); i++) {
-        const struct aofs_entry *e = aofs_entry(i);
-        if (!str_starts(e->name, prefix)) continue;
-        const char *rest = e->name + pl;
-        if (!*rest) continue;
-        bool nested = false;
-        for (const char *p = rest; *p; p++) if (*p == '/') { nested = true; break; }
-        if (nested) continue;
-        if (e->type == AOFS_DIR) kprintf("  %-24s <dir>\n", rest);
-        else kprintf("  %-24s %u B\n", rest, e->size);
-        n++;
+    for (u32 i = 0; ; i++) {
+        const struct mount *m = vfs_mount_at(i);
+        if (!m) break;
+        kprintf("  %-8s %s%s\n", m->prefix, m->ops->name, m->ro ? " (ro)" : "");
     }
-    if (!n) kprintf("  (ures vagy nincs ilyen konyvtar)\n");
 }
 
-static void cmd_cat(const char *path)
+static void cmd_ls(const char *arg)
 {
-    const struct aofs_entry *e = aofs_lookup(path);
-    if (!e || e->type != AOFS_FILE) { kprintf("cat: nincs ilyen fajl: %s\n", path); return; }
-    const char *p = aofs_data(e);
-    for (u32 i = 0; i < e->size; i++)
-        console_putc(p[i]);
-    if (e->size && p[e->size - 1] != '\n')
-        kprintf("\n");
+    char path[VFS_PATH_MAX];
+    if (!canon(arg ? arg : ".", path)) { kprintf("ls: rossz utvonal\n"); return; }
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(path, ents, 64);
+    if (n < 0) { kprintf("ls: %s: %s\n", path, errstr(n)); kfree(ents); return; }
+    for (int i = 0; i < n; i++) {
+        if (ents[i].type == 2) kprintf("  %-24s <dir>\n", ents[i].name);
+        else kprintf("  %-24s %u B\n", ents[i].name, ents[i].size);
+    }
+    if (!n) kprintf("  (ures)\n");
+    kfree(ents);
 }
 
-/* AOX futtatas kernel modban. A program kimenetet minden hivas utan kirajzoljuk,
- * es varakozas elott is, kulonben csak a program vegen jelenne meg. */
-static void api_puts(const char *s) { console_write(s); console_flush(); }
-static int api_getc(void) { struct key_event ev; console_flush(); kbd_wait(&ev); return ev.code; }
-static int api_printf(const char *fmt, ...)
+static void cmd_cat(const char *arg)
 {
-    va_list ap;
-    va_start(ap, fmt);
-    vformat(con_out, NULL, fmt, ap);
-    va_end(ap);
+    char path[VFS_PATH_MAX];
+    if (!canon(arg, path)) { kprintf("cat: rossz utvonal\n"); return; }
+    void *buf;
+    usize size;
+    int e = vfs_read_all(path, &buf, &size);
+    if (e) { kprintf("cat: %s: %s\n", path, errstr(e)); return; }
+    const char *p = buf;
+    for (usize i = 0; i < size; i++) console_putc(p[i]);
+    if (size && p[size - 1] != '\n') kprintf("\n");
+    kfree(buf);
+}
+
+static void cmd_write(int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(argv[1], path)) { kprintf("write: rossz utvonal\n"); return; }
+    char text[LINE_MAX];
+    usize n = 0;
+    for (int i = 2; i < argc; i++) {
+        n += snformat(text + n, sizeof text - n, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
+        if (n >= sizeof text) break;
+    }
+    int e = vfs_write_all(path, text, n);
+    kprintf(e ? "write: %s: %s\n" : "%s: %lu bajt\n", path, e ? errstr(e) : (const char *)(uptr)n);
+}
+
+static void cmd_rm(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(arg, path)) return;
+    int e = vfs_unlink(path);
+    if (e) kprintf("rm: %s: %s\n", path, errstr(e));
+}
+
+static void cmd_mkdir(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(arg, path)) return;
+    int e = vfs_mkdir(path);
+    if (e) kprintf("mkdir: %s: %s\n", path, errstr(e));
+}
+
+static void cmd_cd(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(arg ? arg : "/", path)) return;
+    struct stat st;
+    int e = vfs_stat(path, &st);
+    if (e) { kprintf("cd: %s: %s\n", path, errstr(e)); return; }
+    if (st.type != 2) { kprintf("cd: %s: nem konyvtar\n", path); return; }
+    strlcpy(task_current()->cwd, path, sizeof task_current()->cwd);
+}
+
+/* program keresese: adott ut, vagy /bin/<nev>, /bin/<nev>.aox */
+static bool find_prog(const char *name, char *path)
+{
+    struct stat st;
+    if (canon(name, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
+    char alt[VFS_PATH_MAX];
+    snformat(alt, sizeof alt, "/bin/%s", name);
+    if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
+    snformat(alt, sizeof alt, "/bin/%s.aox", name);
+    if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
+    return false;
+}
+
+static void run_with_caps(const struct capset *cs, int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    if (!find_prog(argv[0], path)) { kprintf("run: nincs ilyen program: %s\n", argv[0]); return; }
+    void *img;
+    usize size;
+    int e = vfs_read_all(path, &img, &size);
+    if (e) { kprintf("run: %s: %s\n", path, errstr(e)); return; }
+    int err;
     console_flush();
-    return 0;
+    u64 t0 = rdtsc();
+    struct task *t = task_create_user(argv[0], img, size, argc, argv, cs, task_current(), &err);
+    kfree(img);
+    if (!t) { kprintf("run: inditas sikertelen: %s\n", errstr(err)); return; }
+    int status = 0;
+    int pid = task_wait(t->id, &status);
+    u64 dt = rdtsc() - t0;
+    console_flush();
+    kprintf("[%s: pid %d, rc=%d%s, %lu ms]\n", argv[0], pid, status,
+            status == E_TIMEOUT ? " (hatarido/kill)" : "", tsc_to_ms(dt));
 }
-static const struct ao_api api = {
-    .version = 1, .puts = api_puts, .getc = api_getc, .ticks = pit_ticks,
-    .alloc = kmalloc, .free = kfree, .printf = api_printf,
-};
 
 static void cmd_run(int argc, char **argv)
 {
-    const struct aofs_entry *e = aofs_lookup(argv[1]);
-    if (!e) {
-        char alt[96];
-        snformat(alt, sizeof alt, "bin/%s", argv[1]);
-        e = aofs_lookup(alt);
-        if (!e) { snformat(alt, sizeof alt, "bin/%s.aox", argv[1]); e = aofs_lookup(alt); }
+    run_with_caps(&task_current()->caps, argc - 1, argv + 1);
+}
+
+static void cmd_spawn(int argc, char **argv)
+{
+    if (argc < 3) { kprintf("spawn manifest prog [arg..]\n"); return; }
+    char path[VFS_PATH_MAX];
+    if (!canon(argv[1], path)) return;
+    void *text;
+    usize len;
+    int e = vfs_read_all(path, &text, &len);
+    if (e) { kprintf("spawn: %s: %s\n", path, errstr(e)); return; }
+    struct capset cs;
+    char err[64];
+    bool ok = capset_parse(&cs, text, len, err, sizeof err);
+    kfree(text);
+    if (!ok) { kprintf("spawn: manifest hiba: %s\n", err); return; }
+    if (!capset_subset(&cs, &task_current()->caps)) { kprintf("spawn: a manifest tobb jogot ker, mint a shell\n"); return; }
+    kprintf("[agent %s: %u capability, mem %luK cpu %lums deadline %lums]\n", cs.name, cs.n,
+            cs.limits.mem_bytes / 1024, cs.limits.cpu_ms, cs.limits.deadline_ms);
+    run_with_caps(&cs, argc - 2, argv + 2);
+}
+
+static void cmd_ps(void)
+{
+    task_reap_orphans();
+    kprintf("  pid  allapot   cpu(ms)  mem(KiB)  agent      nev\n");
+    for (int i = 0; i < TASK_MAX; i++) {
+        const struct task *t = task_at(i);
+        if (!t || t->state == T_FREE) continue;
+        const char *st = t->state == T_RUNNING ? "fut" : t->state == T_READY ? "kesz" :
+                         t->state == T_BLOCKED ? "var" : "zombi";
+        kprintf("  %3u  %-8s %8lu  %8lu  %-10s %s%s\n", t->id, st, t->cpu_ticks * 10, t->mem_used / 1024,
+                t->caps.name, t->name, t->user ? "" : " (kernel)");
     }
-    if (!e || e->type != AOFS_FILE) { kprintf("run: nincs ilyen program: %s\n", argv[1]); return; }
-    const struct aox_header *h = aofs_data(e);
-    if (e->size < sizeof *h || h->magic != AOX_MAGIC) { kprintf("run: nem AOX fajl\n"); return; }
-    if (h->entry >= h->load_size || h->load_size > 16 * MiB) { kprintf("run: hibas fejlec\n"); return; }
-    /* az objcopy a zaro nullakat elhagyja: a fajl rovidebb lehet a load_size-nal */
-    usize have = e->size < h->load_size ? e->size : h->load_size;
-    usize total = h->load_size + h->bss_size;
-    u8 *mem = kmalloc(total + 16);
-    memcpy(mem, h, have);
-    memset(mem + have, 0, total - have);
-    aox_entry_fn entry = (aox_entry_fn)(mem + h->entry);
-    u64 t0 = rdtsc();
-    int rc = entry(&api, argc - 1, argv + 1);
-    u64 dt = rdtsc() - t0;
-    kfree(mem);
-    kprintf("[%s: rc=%d, %lu us]\n", argv[1], rc, tsc_to_us(dt));
+}
+
+static void cmd_caps(const char *arg)
+{
+    struct task *t = task_current();
+    if (arg) {
+        u32 pid = 0;
+        for (const char *p = arg; *p >= '0' && *p <= '9'; p++) pid = pid * 10 + (u32)(*p - '0');
+        t = task_get(pid);
+        if (!t) { kprintf("caps: nincs ilyen task\n"); return; }
+    }
+    kprintf("agent %s (pid %u)\n", t->caps.name, t->id);
+    for (u32 i = 0; i < t->caps.n; i++)
+        kprintf("  %-9s %s\n", cap_kind_name(t->caps.caps[i].kind), t->caps.caps[i].pattern);
+    if (t->caps.limits.mem_bytes) kprintf("  mem       %lu KiB\n", t->caps.limits.mem_bytes / 1024);
+    if (t->caps.limits.cpu_ms) kprintf("  cpu       %lu ms\n", t->caps.limits.cpu_ms);
+    if (t->caps.limits.deadline_ms) kprintf("  deadline  %lu ms\n", t->caps.limits.deadline_ms);
+}
+
+static void cmd_audit(void)
+{
+    u32 n = audit_count();
+    if (!n) { kprintf("  (nincs elutasitas)\n"); return; }
+    for (u32 i = 0; i < n; i++) {
+        const struct audit_entry *e = audit_get(i);
+        kprintf("  t=%lu.%02lus pid %u  %-9s %s  %s\n", e->tick / 100, e->tick % 100, e->pid,
+                cap_kind_name(e->kind), e->allowed ? "OK" : "ELUTASITVA", e->resource);
+    }
 }
 
 static void cmd_fb(void)
@@ -347,7 +455,8 @@ static void cmd_bench(void)
     kprintf("boot -> prompt:     %lu ms (stage2 elejetol)\n", boot_to_prompt_us / 1000);
     kprintf("utolso billentyu:   %lu us (IRQ -> feldolgozas)\n", last_key_us);
     kprintf("idle:               %lu%% (%lu / %lu tick)\n", t ? idle * 100 / t : 0, idle, t);
-    kprintf("kernel image:       %u KiB   heap: %lu KiB\n", boot->kernel_size / 1024, kheap_reserved() / KiB);
+    kprintf("kernel image:       %u KiB   heap: %lu KiB   taskok: %u\n",
+            boot->kernel_size / 1024, kheap_reserved() / KiB, task_count());
     u64 s = rdtsc();
     console_clear();
     for (int i = 0; i < 100; i++) kprintf("konzol-teszt sor %d: a gyors barna roka atugrik a lusta kutyan 0123456789\n", i);
@@ -360,7 +469,6 @@ static void cmd_bench(void)
 static void cmd_crash(const char *what)
 {
     if (!what || strcmp(what, "div") == 0) {
-        /* a fordito a C-szintu nullaval osztast kioptimalizalhatja (UB), ezert asm */
         __asm__ volatile("xor %%ecx, %%ecx; mov $1, %%eax; xor %%edx, %%edx; div %%ecx" ::: "eax", "ecx", "edx");
     } else if (strcmp(what, "page") == 0) {
         volatile u64 *p = (volatile u64 *)0xDEAD0000DEAD0000ULL;
@@ -376,11 +484,11 @@ static void cmd_reboot(void)
 {
     kprintf("ujrainditas...\n");
     console_flush();
+    vfs_sync();
     cli();
     for (u32 i = 0; i < 100000; i++)
         if (!(inb(0x64) & 2)) break;
     outb(0x64, 0xFE);
-    /* ha az i8042 nem valaszol: tripla hiba */
     struct { u16 l; u64 b; } PACKED z = { 0, 0 };
     __asm__ volatile("lidt %0; int3" : : "m"(z));
     halt_forever();
@@ -398,9 +506,24 @@ static void execute(char *line)
     else if (!strcmp(c, "cpu")) cmd_cpu();
     else if (!strcmp(c, "disk")) cmd_disk();
     else if (!strcmp(c, "pci")) cmd_pci();
+    else if (!strcmp(c, "mount")) cmd_mount();
     else if (!strcmp(c, "ls")) cmd_ls(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "cat")) { if (argc > 1) cmd_cat(argv[1]); else kprintf("cat: fajlnev kell\n"); }
+    else if (!strcmp(c, "write")) { if (argc > 2) cmd_write(argc, argv); else kprintf("write fajl szoveg...\n"); }
+    else if (!strcmp(c, "rm")) { if (argc > 1) cmd_rm(argv[1]); }
+    else if (!strcmp(c, "mkdir")) { if (argc > 1) cmd_mkdir(argv[1]); }
+    else if (!strcmp(c, "cd")) cmd_cd(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "pwd")) kprintf("%s\n", cwd());
     else if (!strcmp(c, "run")) { if (argc > 1) cmd_run(argc, argv); else kprintf("run: programnev kell\n"); }
+    else if (!strcmp(c, "spawn")) cmd_spawn(argc, argv);
+    else if (!strcmp(c, "ps")) cmd_ps();
+    else if (!strcmp(c, "kill")) {
+        u32 pid = 0;
+        if (argc > 1) for (const char *p = argv[1]; *p >= '0' && *p <= '9'; p++) pid = pid * 10 + (u32)(*p - '0');
+        kprintf(task_kill(pid) ? "kill: pid %u megjelolve\n" : "kill: nincs ilyen user-task (%u)\n", pid);
+    }
+    else if (!strcmp(c, "caps")) cmd_caps(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "audit")) cmd_audit();
     else if (!strcmp(c, "fb")) cmd_fb();
     else if (!strcmp(c, "kbd")) { if (argc > 1) kbd_set_layout(argv[1]); kprintf("kiosztas: %s\n", kbd_layout()); }
     else if (!strcmp(c, "bench")) cmd_bench();
@@ -424,7 +547,10 @@ void shell_run(const struct bootinfo *bi)
             pmm_total_frames() * PAGE_SIZE / MiB, tsc_hz() / 1000000, console_cols(), console_rows(),
             kbd_layout(), boot_to_prompt_us / 1000);
     for (;;) {
-        read_line("AO> ", line);
+        char prompt[VFS_PATH_MAX + 8];
+        if (strcmp(cwd(), "/") == 0) strcpy(prompt, "AO> ");
+        else snformat(prompt, sizeof prompt, "AO %s> ", cwd());
+        read_line(prompt, line);
         if (line[0]) {
             if (hist_count == 0 || strcmp(history[hist_count - 1], line) != 0) {
                 if (hist_count == HIST_MAX) {
@@ -433,7 +559,6 @@ void shell_run(const struct bootinfo *bi)
                 }
                 strlcpy(history[hist_count++], line, LINE_MAX);
             }
-            hist_pos = hist_count;
             execute(line);
         }
         console_flush();

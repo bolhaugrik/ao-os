@@ -28,8 +28,8 @@ void gdt_init(void)
     gdt[0] = 0;
     gdt[1] = 0x00AF9A000000FFFFULL;   /* kernel kod, L=1 */
     gdt[2] = 0x00CF92000000FFFFULL;   /* kernel adat */
-    gdt[3] = 0x00AFFA000000FFFFULL;   /* user kod, DPL3 */
-    gdt[4] = 0x00CFF2000000FFFFULL;   /* user adat, DPL3 */
+    gdt[3] = 0x00CFF2000000FFFFULL;   /* user adat, DPL3 (0x18) */
+    gdt[4] = 0x00AFFA000000FFFFULL;   /* user kod, DPL3, L=1 (0x20) */
 
     memset(&tss, 0, sizeof tss);
     tss.iomap_base = sizeof tss;

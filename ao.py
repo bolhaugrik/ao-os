@@ -60,12 +60,19 @@ KERNEL_C = [
     "kernel/drv/kbd.c",
     "kernel/drv/pci.c",
     "kernel/fs/aofs.c",
+    "kernel/fs/vfs.c",
+    "kernel/fs/ramfs.c",
+    "kernel/task/task.c",
+    "kernel/task/syscall.c",
+    "kernel/task/pipe.c",
+    "kernel/cap/cap.c",
     "kernel/shell/shell.c",
 ]
-KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm"]
+KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm", "kernel/task/sched.asm"]
 
 # AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
-USER_PROGS = ["hello"]
+USER_PROGS = ["hello", "captest", "spin"]
+USER_LIB = ["user/aolib.c", "kernel/lib/fmt.c", "kernel/lib/string.c"]
 USER_CFLAGS = [
     "--target=x86_64-elf",
     "-ffreestanding", "-fno-builtin", "-nostdlib", "-nostdinc",
@@ -74,6 +81,7 @@ USER_CFLAGS = [
     "-mno-red-zone", "-mno-mmx", "-mno-sse", "-mno-sse2",
     "-O2", "-g", "-std=c11", "-Wall", "-Wextra", "-Werror",
     "-I", os.path.join(ROOT, "user"),
+    "-I", os.path.join(ROOT, "kernel", "include"),
 ]
 
 QEMU_MEM = "2048"
@@ -133,12 +141,17 @@ def build():
     os.makedirs(os.path.join(ROOT, "rootfs", "bin"), exist_ok=True)
     crt0 = b("crt0.o")
     run([t["nasm"], "-f", "elf64", "user/crt0.asm", "-o", crt0])
+    libobjs = []
+    for src in USER_LIB:
+        obj = b("ulib_" + src.replace("/", "_").replace(".c", ".o"))
+        run([t["clang"]] + USER_CFLAGS + ["-c", src, "-o", obj])
+        libobjs.append(obj)
     for prog in USER_PROGS:
         obj = b(f"user_{prog}.o")
         run([t["clang"]] + USER_CFLAGS + ["-c", f"user/{prog}.c", "-o", obj])
         elf = b(f"{prog}.aox.elf")
         run([t["ld.lld"], "-T", "user/aox.ld", "-nostdlib", "-static", "--no-pie", "-z", "max-page-size=0x10",
-             "-o", elf, crt0, obj])
+             "-o", elf, crt0, obj] + libobjs)
         run([t["llvm-objcopy"], "-O", "binary", elf, os.path.join(ROOT, "rootfs", "bin", f"{prog}.aox")])
 
     print("[ramdisk]")

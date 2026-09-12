@@ -28,6 +28,9 @@ struct aofs_super {
     u32 total_size;
 } PACKED;
 
+#include "vfs.h"
+extern const struct fs_ops aofs1_ops;     /* csak olvashato VFS-illesztes */
+
 bool aofs_mount(const void *image, u32 size);
 bool aofs_mounted(void);
 u32  aofs_count(void);

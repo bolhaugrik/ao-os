@@ -3,6 +3,7 @@
 #include "gdt.h"
 #include "pic.h"
 #include "panic.h"
+#include "../task/task.h"
 #include "../lib/string.h"
 
 struct idt_entry {
@@ -78,6 +79,7 @@ void isr_dispatch(struct regs *r)
         if (irq_handlers[irq])
             irq_handlers[irq](r);
         pic_eoi(irq);
+        task_preempt_check(r);
         return;
     }
     /* egyeb vektor: figyelmen kivul */
