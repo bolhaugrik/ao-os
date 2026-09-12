@@ -271,11 +271,22 @@ static void cmd_cat(const char *path)
         kprintf("\n");
 }
 
-/* AOX futtatas kernel modban */
-static int api_getc(void) { struct key_event ev; kbd_wait(&ev); return ev.code; }
+/* AOX futtatas kernel modban. A program kimenetet minden hivas utan kirajzoljuk,
+ * es varakozas elott is, kulonben csak a program vegen jelenne meg. */
+static void api_puts(const char *s) { console_write(s); console_flush(); }
+static int api_getc(void) { struct key_event ev; console_flush(); kbd_wait(&ev); return ev.code; }
+static int api_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vformat(con_out, NULL, fmt, ap);
+    va_end(ap);
+    console_flush();
+    return 0;
+}
 static const struct ao_api api = {
-    .version = 1, .puts = console_write, .getc = api_getc, .ticks = pit_ticks,
-    .alloc = kmalloc, .free = kfree, .printf = kprintf,
+    .version = 1, .puts = api_puts, .getc = api_getc, .ticks = pit_ticks,
+    .alloc = kmalloc, .free = kfree, .printf = api_printf,
 };
 
 static void cmd_run(int argc, char **argv)
@@ -387,12 +398,13 @@ void shell_run(const struct bootinfo *bi)
 {
     boot = bi;
     char line[LINE_MAX];
+    boot_to_prompt_us = tsc_to_us(rdtsc() - bi->boot_tsc);
     console_set_color(CON_AMBER, CON_BLACK);
     kprintf("AO-OS v0.1  ");
     console_set_color(CON_DEFAULT_FG, CON_BLACK);
-    kprintf("mem %luM  cpu %lu MHz  konzol %ux%u  kbd %s\n\n",
-            pmm_total_frames() * PAGE_SIZE / MiB, tsc_hz() / 1000000, console_cols(), console_rows(), kbd_layout());
-    boot_to_prompt_us = tsc_to_us(rdtsc() - bi->boot_tsc);
+    kprintf("mem %luM  cpu %lu MHz  konzol %ux%u  kbd %s  boot %lu ms\n\n",
+            pmm_total_frames() * PAGE_SIZE / MiB, tsc_hz() / 1000000, console_cols(), console_rows(),
+            kbd_layout(), boot_to_prompt_us / 1000);
     for (;;) {
         read_line("AO> ", line);
         if (line[0]) {

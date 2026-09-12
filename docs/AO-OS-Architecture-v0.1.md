@@ -558,7 +558,9 @@ AO> cat boot.txt
 
 a netbookon, billentyűzetről, 2 másodpercen belül a BIOS-átadás után.
 
-**Állapot 2026-09-12: QEMU-ban teljesítve, HW-teszt folyamatban.** A `tests/smoke.py` 12 ellenőrzése zöld (help, mem, cpu, disk, ls, cat, run hello, echo, fb, bench, uptime, crash div → kivétel-dump). Mért értékek QEMU-ban: stage2 → prompt 96 ms, kernel.bin 49 KB, ramdisk 5,4 KB, ao.img 8 MiB. Kódméret: 3 242 sor C/asm/ld a boot+kernel+user fában (font-adat nélkül), a 8 000-es Phase 1 cél alatt. Két hiba került elő és javítva: a heap `kfree` a szabadlista-mutatóval felülírta a méretosztály-mezőt, mielőtt olvasta volna; az AOX-fájl rövidebb a `load_size`-nál, mert az objcopy a záró nullákat elhagyja.
+**Teljesítve valódi hardveren 2026-09-12.** A netbookon a shell billentyűzetről működik (`kbd hu`, `cpu`, `mem`, `bench`, `run hello`). Mért HW-értékek: VBE 0x1D4 1366×768, framebuffer 0x80000000, **pitch 5632 bájt (1408 px)**, tehát a pitch-alapú rajzolás elengedhetetlen volt; TSC 998 MHz invariáns, 2 mag, Family 20 modell 2; 19 E820-bejegyzés, 1741 MiB használható; 25 PCI-eszköz; 100 sor kiírása 2 ms write-combining módban; kernel-init 63 ms (ebből 50 ms a TSC-kalibráció). Egy HW-n talált hiba javítva: az AOX-program kimenete csak a program végén rajzolódott ki, most minden `puts`/`printf`/`getc` előtt kirajzolódik.
+
+Korábbi állapot: QEMU-ban teljesítve. A `tests/smoke.py` 12 ellenőrzése zöld (help, mem, cpu, disk, ls, cat, run hello, echo, fb, bench, uptime, crash div → kivétel-dump). Mért értékek QEMU-ban: stage2 → prompt 96 ms, kernel.bin 49 KB, ramdisk 5,4 KB, ao.img 8 MiB. Kódméret: 3 242 sor C/asm/ld a boot+kernel+user fában (font-adat nélkül), a 8 000-es Phase 1 cél alatt. Két hiba került elő és javítva: a heap `kfree` a szabadlista-mutatóval felülírta a méretosztály-mezőt, mielőtt olvasta volna; az AOX-fájl rövidebb a `load_size`-nál, mert az objcopy a záró nullákat elhagyja.
 
 ### Phase 2 — Taskok, capability-k, írható tároló
 
