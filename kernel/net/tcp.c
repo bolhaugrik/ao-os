@@ -231,7 +231,11 @@ int tcp_connect(u32 ip, u16 port, u32 timeout_ms)
     if (e) { s->state = T_CLOSED; return e; }
     u64 end = pit_ticks() + timeout_ms / 10 + 1;
     while (s->state == T_SYN_SENT && pit_ticks() < end) {
-        if (task_current()) task_sleep_ms(10); else idle_enter();
+        if (task_current()) {
+            cli();
+            if (s->state != T_SYN_SENT) { sti(); break; }
+            task_block_timeout(&s->q, 200);
+        } else idle_enter();
     }
     if (s->state != T_ESTABLISHED) {
         s->state = T_CLOSED;
@@ -275,7 +279,9 @@ isize tcp_recv(int id, void *buf, usize n, u32 timeout_ms)
         if (timeout_ms && pit_ticks() >= end) return E_TIMEOUT;
         if (task_current()) {
             if (task_current()->killed) return E_TIMEOUT;
-            task_sleep_ms(10);
+            cli();
+            if (s->rx_count || s->peer_closed || s->state == T_CLOSED) { sti(); continue; }
+            task_block_timeout(&s->q, timeout_ms ? 500 : 1000);
         } else idle_enter();
     }
     u8 *d = buf;

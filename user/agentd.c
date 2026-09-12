@@ -308,6 +308,7 @@ int main(int argc, char **argv)
         int e = recv_frame(&type, &len);
         if (e) { ao_printf("\nagentd: kapcsolat: %s\n", ao_errstr(e)); rc = 4; break; }
         if (type == F_HELLO_OK) {
+            for (usize i = 0; i < len; i++) if (payload[i] == '\n') { payload[i] = 0; break; }
             ao_printf("[hid: %s]\n", (char *)payload);
         } else if (type == F_DELTA) {
             ao_write(1, payload, len);

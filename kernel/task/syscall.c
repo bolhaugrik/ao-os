@@ -52,7 +52,13 @@ static isize con_read(u8 *buf, usize n)
     if (task_current()->killed)
         return E_TIMEOUT;
     u16 k = ev.code;
-    if (k < 0x100) { buf[0] = (u8)k; return 1; }
+    if (!KEY_IS_SPECIAL(k)) {
+        char enc[4];
+        u32 l = utf8_encode(k, enc);
+        if (l > n) l = (u32)n;
+        memcpy(buf, enc, l);
+        return (isize)l;
+    }
     const char *seq = NULL;
     switch (k) {
     case KEY_UP: seq = "\x1b[A"; break;

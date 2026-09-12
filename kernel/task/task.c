@@ -256,8 +256,10 @@ void waitq_wake_all(struct waitq *q)
         struct task *n = t->wq_next;
         t->wq = NULL;
         t->wq_next = NULL;
-        if (t->state == T_BLOCKED)
+        if (t->state == T_BLOCKED) {
             t->state = T_READY;
+            if (t->wake_tick) t->wake_tick = ~0ULL;   /* jelzes: esemeny ebresztett, nem az ido */
+        }
         t = n;
     }
 }
@@ -280,11 +282,28 @@ void task_block_on(struct waitq *q)
     cli();
     struct task *t = current;
     t->state = T_BLOCKED;
+    t->wake_tick = 0;
     t->wq = q;
     t->wq_next = q->head;
     q->head = t;
     schedule();
     sti();
+}
+
+bool task_block_timeout(struct waitq *q, u32 ms)
+{
+    cli();
+    struct task *t = current;
+    t->state = T_BLOCKED;
+    t->wake_tick = pit_ticks() + ms / 10 + 1;
+    t->wq = q;
+    t->wq_next = q->head;
+    q->head = t;
+    schedule();
+    bool woken = t->wake_tick != 0;     /* a tick-kezelo nullazza, ha idozitve ebresztett */
+    t->wake_tick = 0;
+    sti();
+    return woken;
 }
 
 /* ---------------------------------------------------------------- utemezo */
@@ -335,20 +354,18 @@ void task_yield(void)
 
 void task_sleep_ms(u32 ms)
 {
-    cli();
-    current->wake_tick = pit_ticks() + ms / 10 + 1;
-    sti();
-    task_block_on(&sleep_q);
+    task_block_timeout(&sleep_q, ms);
 }
 
 void task_tick(void)
 {
     u64 now = pit_ticks();
-    /* alvok ebresztese */
+    /* alvok es idozitett varakozok ebresztese */
     for (int i = 1; i < TASK_MAX; i++) {
         struct task *t = &tasks[i];
-        if (t->state == T_BLOCKED && t->wq == &sleep_q && t->wake_tick <= now) {
+        if (t->state == T_BLOCKED && t->wake_tick && t->wake_tick <= now) {
             waitq_remove(t);
+            t->wake_tick = 0;
             t->state = T_READY;
         }
     }

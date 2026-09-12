@@ -285,7 +285,11 @@ int net_ping(u32 dst, u32 timeout_ms, u32 *rtt_us)
     if (e) return e;
     u64 end = pit_ticks() + timeout_ms / 10 + 1;
     while (!ping_got && pit_ticks() < end) {
-        if (task_current()) task_sleep_ms(10); else idle_enter();
+        if (task_current()) {
+            cli();
+            if (ping_got) { sti(); break; }
+            task_block_timeout(&ping_q, timeout_ms);
+        } else idle_enter();
     }
     if (!ping_got) return E_TIMEOUT;
     *rtt_us = (u32)tsc_to_us(rdtsc() - t0);

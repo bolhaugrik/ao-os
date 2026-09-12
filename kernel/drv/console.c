@@ -29,6 +29,32 @@ static u32 last_cursor_col = ~0u, last_cursor_row = ~0u;
 static int esc_state;           /* 0 nincs, 1 ESC, 2 CSI */
 static int esc_args[4], esc_nargs;
 
+/* UTF-8 dekoder allapot */
+static u32 u8_cp;
+static int u8_need;
+static u8 u8_lead;
+
+/* Unicode kodpont -> glyph-index a fontban (Latin-2 elrendezes) */
+static u8 glyph_for(u32 cp)
+{
+    if (cp < 0x80) return (u8)cp;
+    switch (cp) {
+    case 0xA7: case 0xC1: case 0xC9: case 0xCD: case 0xD3: case 0xD6: case 0xDA: case 0xDC:
+    case 0xE1: case 0xE9: case 0xED: case 0xF3: case 0xF6: case 0xFA: case 0xFC:
+        return (u8)cp;
+    case 0x150: return 0xD5;    /* Ő */
+    case 0x151: return 0xF5;    /* ő */
+    case 0x170: return 0xDB;    /* Ű */
+    case 0x171: return 0xFB;    /* ű */
+    case 0x2013: case 0x2014: return '-';
+    case 0x2018: case 0x2019: return '\'';
+    case 0x201C: case 0x201D: case 0x201E: return '"';
+    case 0x2026: return '.';
+    case 0xA0: return ' ';
+    default: return 0x7F;       /* ismeretlen: ures teglalap */
+    }
+}
+
 static void palette_init(void)
 {
     static const u8 rgb[16][3] = {
@@ -185,6 +211,23 @@ void console_putc(char ch)
             for (u32 i = cur_col; i < cols; i++) { l[i].ch = ' '; l[i].attr = cur_attr; }
             mark_row(cur_row);
         }
+        return;
+    }
+    /* UTF-8: folytato bajtok gyujtese; ervenytelen sorozatnal a vezeto bajt Latin-2-kent jelenik meg */
+    if (u8_need) {
+        if ((c & 0xC0) == 0x80) {
+            u8_cp = (u8_cp << 6) | (c & 0x3F);
+            if (--u8_need == 0) put_raw(glyph_for(u8_cp));
+            return;
+        }
+        u8_need = 0;
+        put_raw(u8_lead);
+    }
+    if (c >= 0x80) {
+        if ((c & 0xE0) == 0xC0) { u8_need = 1; u8_cp = c & 0x1F; u8_lead = c; return; }
+        if ((c & 0xF0) == 0xE0) { u8_need = 2; u8_cp = c & 0x0F; u8_lead = c; return; }
+        if ((c & 0xF8) == 0xF0) { u8_need = 3; u8_cp = c & 0x07; u8_lead = c; return; }
+        put_raw(c);                     /* magaban allo folytato bajt: Latin-2 glyph */
         return;
     }
     switch (c) {

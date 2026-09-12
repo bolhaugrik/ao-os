@@ -80,10 +80,21 @@ static const char *errstr(int e)
 }
 
 /* ---------------------------------------------------------------- line editor */
+/* A sor UTF-8 bajtokat tartalmaz; a kurzor bajt-indexu, a megjelenitett oszlop a nem-folytato
+ * bajtok szama. A sort minden billentyu utan ujrarajzoljuk (prompt + puffer). */
+static inline bool is_cont(char c) { return ((u8)c & 0xC0) == 0x80; }
+
+static u32 display_width(const char *s, u32 nbytes)
+{
+    u32 w = 0;
+    for (u32 i = 0; i < nbytes; i++) if (!is_cont(s[i])) w++;
+    return w;
+}
+
 static void redraw_line(const char *prompt, const char *line, u32 cur)
 {
     kprintf("\r\x1b[K%s%s", prompt, line);
-    console_set_col((u32)strlen(prompt) + cur);
+    console_set_col((u32)strlen(prompt) + display_width(line, cur));
     console_flush();
 }
 
@@ -104,11 +115,21 @@ static void read_line(const char *prompt, char *line)
             console_flush();
             break;
         } else if (k == '\b') {
-            if (cur > 0) { memmove(line + cur - 1, line + cur, len - cur + 1); len--; cur--; }
+            if (cur > 0) {
+                u32 s = cur - 1;
+                while (s > 0 && is_cont(line[s])) s--;
+                memmove(line + s, line + cur, len - cur + 1);
+                len -= cur - s; cur = s;
+            }
         } else if (k == KEY_DEL) {
-            if (cur < len) { memmove(line + cur, line + cur + 1, len - cur); len--; }
-        } else if (k == KEY_LEFT) { if (cur) cur--; }
-        else if (k == KEY_RIGHT) { if (cur < len) cur++; }
+            if (cur < len) {
+                u32 e = cur + 1;
+                while (e < len && is_cont(line[e])) e++;
+                memmove(line + cur, line + e, len - e + 1);
+                len -= e - cur;
+            }
+        } else if (k == KEY_LEFT) { if (cur) { cur--; while (cur > 0 && is_cont(line[cur])) cur--; } }
+        else if (k == KEY_RIGHT) { if (cur < len) { cur++; while (cur < len && is_cont(line[cur])) cur++; } }
         else if (k == KEY_HOME) { cur = 0; }
         else if (k == KEY_END) { cur = len; }
         else if (k == KEY_UP || k == KEY_DOWN) {
@@ -123,10 +144,13 @@ static void read_line(const char *prompt, char *line)
         else if (k == KEY_PGDN) { console_scroll_view(-(int)console_rows() / 2); console_flush(); continue; }
         else if (k == 3) { kprintf("^C\n"); line[0] = 0; len = cur = 0; kprintf("%s", prompt); }
         else if (k == 12) { console_clear(); kprintf("%s%s", prompt, line); }
-        else if (k < 0x100 && k >= 32 && len < LINE_MAX - 1 && (u32)strlen(prompt) + len + 1 < console_cols()) {
-            memmove(line + cur + 1, line + cur, len - cur + 1);
-            line[cur] = (char)k;
-            len++; cur++;
+        else if (!KEY_IS_SPECIAL(k) && k >= 32 && len < LINE_MAX - 4 &&
+                 (u32)strlen(prompt) + display_width(line, len) + 1 < console_cols()) {
+            char enc[4];
+            u32 n = utf8_encode(k, enc);
+            memmove(line + cur + n, line + cur, len - cur + 1);
+            memcpy(line + cur, enc, n);
+            len += n; cur += n;
         } else {
             continue;
         }

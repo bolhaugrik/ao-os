@@ -19,25 +19,25 @@ static u8 mods;
 static bool caps, e0;
 static int layout_id;   /* 0 us, 1 hu */
 
-/* Latin-2 kodok a magyar betukhoz */
+/* Unicode kodpontok a magyar betukhoz */
 #define aa 0xE1
 #define ee 0xE9
 #define ii 0xED
 #define oo 0xF3
 #define ou 0xF6
-#define od 0xF5
+#define od 0x151
 #define uu 0xFA
 #define uy 0xFC
-#define ud 0xFB
+#define ud 0x171
 #define AA 0xC1
 #define EE 0xC9
 #define II 0xCD
 #define OO 0xD3
 #define OU 0xD6
-#define OD 0xD5
+#define OD 0x150
 #define UU 0xDA
 #define UY 0xDC
-#define UD 0xDB
+#define UD 0x170
 
 struct keymap {
     u16 normal[128];
@@ -170,12 +170,16 @@ static void kbd_irq(struct regs *r)
         code = km->normal[sc];
     if (!code)
         return;
-    if (caps && code < 0x100) {
-        u8 c = (u8)code;
-        bool lower = (c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE);
-        bool upper = (c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE);
-        if (lower) code = c - 0x20;
-        else if (upper) code = c + 0x20;
+    if (caps && !KEY_IS_SPECIAL(code)) {
+        if (code < 0x100) {
+            u8 c = (u8)code;
+            bool lower = (c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE);
+            bool upper = (c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE);
+            if (lower) code = c - 0x20;
+            else if (upper) code = c + 0x20;
+        } else if (code == 0x150 || code == 0x151 || code == 0x170 || code == 0x171) {
+            code ^= 1;                  /* ő<->Ő, ű<->Ű */
+        }
     }
     if ((mods & MOD_CTRL) && code < 0x100) {
         u8 c = (u8)code;
@@ -247,11 +251,25 @@ bool kbd_poll(struct key_event *ev)
 static bool serial_key(struct key_event *ev)
 {
     static int st;
+    static u32 ucp;
+    static int uneed;
     while (serial_has_input()) {
         u8 c = serial_getc();
         ev->mods = 0;
         ev->tsc = rdtsc();
         if (st == 0) {
+            /* UTF-8 a soros vonalon: kodpontta alakitjuk, mint a billentyuzetnel */
+            if (uneed) {
+                if ((c & 0xC0) == 0x80) {
+                    ucp = (ucp << 6) | (c & 0x3F);
+                    if (--uneed == 0) { ev->code = (u16)(ucp > 0xFFFF ? 0x7F : ucp); return true; }
+                    continue;
+                }
+                uneed = 0;
+            }
+            if ((c & 0xE0) == 0xC0) { uneed = 1; ucp = c & 0x1F; continue; }
+            if ((c & 0xF0) == 0xE0) { uneed = 2; ucp = c & 0x0F; continue; }
+            if ((c & 0xF8) == 0xF0) { uneed = 3; ucp = c & 0x07; continue; }
             if (c == 0x1B) { st = 1; continue; }
             if (c == '\r') c = '\n';
             if (c == 0x7F) c = '\b';

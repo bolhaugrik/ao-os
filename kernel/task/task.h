@@ -71,6 +71,7 @@ bool task_kill(u32 pid);
 void task_yield(void);
 void task_sleep_ms(u32 ms);
 void task_block_on(struct waitq *q);           /* IF barmilyen; visszateres utan IF=1 */
+bool task_block_timeout(struct waitq *q, u32 ms); /* false = lejart az ido (nem ebresztettek) */
 void waitq_wake_all(struct waitq *q);
 void schedule(void);                           /* IF=0 mellett hivando */
 void task_tick(void);                          /* PIT-bol */

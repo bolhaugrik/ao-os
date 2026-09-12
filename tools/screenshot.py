@@ -32,17 +32,29 @@ def ppm_to_png(ppm_path, png_path):
 
 
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ao.BUILD, "screen.png")
+    positional = [a for i, a in enumerate(sys.argv) if i > 0 and not a.startswith("--") and sys.argv[i - 1] != "--cmd"]
+    out = positional[0] if positional else os.path.join(ao.BUILD, "screen.png")
     t = ao.tools()
     ppm = os.path.join(ao.BUILD, "screen.ppm")
     if os.path.exists(ppm):
         os.remove(ppm)
     import socket
     port = 4488
-    cmd = ao.qemu_cmd(t, ["-display", "none", "-serial", "null",
+    # opcionalis parancsok a soros porton at: --cmd "..." (tobbszor is)
+    cmds = [a for i, a in enumerate(sys.argv) if i > 0 and sys.argv[i - 1] == "--cmd"]
+    serial_port = 4489
+    serial_arg = f"tcp:127.0.0.1:{serial_port},server,nowait" if cmds else "null"
+    cmd = ao.qemu_cmd(t, ["-display", "none", "-serial", serial_arg,
                           "-monitor", f"tcp:127.0.0.1:{port},server,nowait"])
     p = subprocess.Popen(cmd, cwd=ROOT)
     time.sleep(4)
+    if cmds:
+        ser = socket.create_connection(("127.0.0.1", serial_port), timeout=5)
+        for c in cmds:
+            ser.sendall(c.encode("utf-8") + b"\n")
+            time.sleep(1.5)
+        ser.close()
+        time.sleep(1)
     s = socket.create_connection(("127.0.0.1", port), timeout=5)
     s.settimeout(1)
     try:
