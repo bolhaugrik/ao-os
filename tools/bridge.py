@@ -19,8 +19,6 @@ import threading
 import urllib.error
 import urllib.request
 
-MAGIC = b"AOP1"
-HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
 
 SYSTEM = """Te egy AI-agent vagy, aki egy AO-OS nevu, minimalis, sajat kernelu operacios rendszeren dolgozik
 (Acer Aspire One netbook, 1366x768 szoveges konzol). Nincs Linux, nincs POSIX, nincs shell: nem letezik
@@ -48,50 +46,11 @@ TOOL_DEFS = [
 ]
 
 
-# ---------------------------------------------------------------- keretezes
-def send_frame(sock, ftype, payload=b""):
-    if isinstance(payload, str):
-        payload = payload.encode("utf-8", errors="replace")
-    sock.sendall(MAGIC + struct.pack("<HHI", ftype, 0, len(payload)) + payload)
-
-
-def recv_exact(sock, n):
-    buf = b""
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            return None
-        buf += chunk
-    return buf
-
-
-def recv_frame(sock):
-    hdr = recv_exact(sock, 12)
-    if hdr is None or hdr[:4] != MAGIC:
-        return None, None
-    ftype, _flags, length = struct.unpack("<HHI", hdr[4:])
-    if length > 4 * 1024 * 1024:
-        return None, None
-    payload = recv_exact(sock, length) if length else b""
-    if payload is None:
-        return None, None
-    return ftype, payload
-
-
-def encode_tool_call(tool_id, name, inputs):
-    out = f"{tool_id}\n{name}\n".encode()
-    for k, v in inputs.items():
-        vb = str(v).encode("utf-8", errors="replace")
-        out += f"{k}\n{len(vb)}\n".encode() + vb + b"\n"
-    return out
-
-
-def parse_tool_result(payload):
-    text = payload.decode("utf-8", errors="replace")
-    parts = text.split("\n", 2)
-    if len(parts) < 3:
-        return parts[0] if parts else "", "error", "hianyos TOOL_RESULT"
-    return parts[0], parts[1], parts[2]
+# ---------------------------------------------------------------- keretezes (tools/aop.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, load_psk, default_psk_path,  # noqa: E402
+                 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG)
+import aocrypto  # noqa: E402
 
 
 # ---------------------------------------------------------------- szolgaltatok
@@ -258,12 +217,14 @@ def make_backend(provider, model, effort, system):
 
 # ---------------------------------------------------------------- egy kapcsolat
 class Session:
-    def __init__(self, sock, addr, provider, model, effort):
-        self.sock = sock
+    def __init__(self, sock, addr, provider, model, effort, psk, strict):
+        self.conn = Conn(sock)
         self.addr = addr
         self.provider = provider
         self.model = model
         self.effort = effort
+        self.psk = psk
+        self.strict = strict
         self.backend = None
         self.context = ""
         self.agent = "agent"
@@ -272,13 +233,13 @@ class Session:
         print(f"[{self.addr[0]} {self.agent}] {msg}", flush=True)
 
     def call_tool(self, tool_id, name, inputs):
-        send_frame(self.sock, TOOL_CALL, encode_tool_call(tool_id, name, inputs))
+        self.conn.send(TOOL_CALL, encode_tool_call(tool_id, name, inputs))
         while True:
-            ftype, payload = recv_frame(self.sock)
+            ftype, payload = self.conn.recv()
             if ftype is None:
                 raise ConnectionError("a kapcsolat megszakadt eszkoz-hivas kozben")
             if ftype == PING:
-                send_frame(self.sock, PONG)
+                self.conn.send(PONG)
                 continue
             if ftype != TOOL_RESULT:
                 continue
@@ -290,26 +251,27 @@ class Session:
     def run_turn(self, prompt):
         if self.backend is None:
             self.backend = make_backend(self.provider, self.model, self.effort, SYSTEM + "\n\n" + self.context)
-        stop = self.backend.run_turn(prompt, lambda t: send_frame(self.sock, DELTA, t), self.call_tool, self.log)
+        stop = self.backend.run_turn(prompt, lambda t: self.conn.send(DELTA, t), self.call_tool, self.log)
         if stop == "refusal":
-            send_frame(self.sock, ERR, "a modell elutasitotta a kerest")
+            self.conn.send(ERR, "a modell elutasitotta a kerest")
         elif stop == "toomany":
-            send_frame(self.sock, ERR, f"tul sok eszkoz-hivas ({Backend.MAX_TOOL_CALLS}), a feladat megszakitva")
+            self.conn.send(ERR, f"tul sok eszkoz-hivas ({Backend.MAX_TOOL_CALLS}), a feladat megszakitva")
         else:
-            send_frame(self.sock, END, f"stop={stop}\n")
+            self.conn.send(END, f"stop={stop}\n")
 
     def serve(self):
         self.log("kapcsolodott")
         try:
             while True:
-                ftype, payload = recv_frame(self.sock)
+                ftype, payload = self.conn.recv()
                 if ftype is None:
                     break
                 if ftype == HELLO:
-                    for line in payload.decode(errors="replace").splitlines():
-                        if line.startswith("agent="):
-                            self.agent = line[6:].strip() or "agent"
-                    send_frame(self.sock, HELLO_OK, f"model={self.model}\n")
+                    self.agent, err = server_handshake(self.conn, payload, self.psk, self.model, self.strict)
+                    if err:
+                        self.log(err)
+                        break
+                    self.log("titkositott csatorna" if self.conn.chan else "titkositatlan kapcsolat")
                 elif ftype == CONTEXT:
                     self.context = payload.decode("utf-8", errors="replace")
                 elif ftype == PROMPT:
@@ -318,17 +280,17 @@ class Session:
                     try:
                         self.run_turn(text)
                     except (RuntimeError, urllib.error.URLError) as e:
-                        send_frame(self.sock, ERR, f"{e}")
+                        self.conn.send(ERR, f"{e}")
                     except Exception as e:  # SDK-hibak (APIStatusError, APIConnectionError, ...)
                         name = type(e).__name__
                         msg = getattr(e, "message", None) or str(e)
-                        send_frame(self.sock, ERR, f"{name}: {msg[:300]}")
+                        self.conn.send(ERR, f"{name}: {msg[:300]}")
                 elif ftype == PING:
-                    send_frame(self.sock, PONG)
+                    self.conn.send(PONG)
         except (ConnectionError, OSError) as e:
             self.log(f"kapcsolat vege: {e}")
         finally:
-            self.sock.close()
+            self.conn.close()
             self.log("lezarva")
 
 
@@ -355,10 +317,26 @@ def main():
     ap.add_argument("--provider", choices=["claude", "gemini"], default=os.environ.get("AO_PROVIDER"))
     ap.add_argument("--model", default=os.environ.get("AO_MODEL"))
     ap.add_argument("--effort", default=os.environ.get("AO_EFFORT", "medium"), choices=["low", "medium", "high"])
+    ap.add_argument("--psk-file", default=os.environ.get("AO_PSK_FILE", default_psk_path()),
+                    help="PSK (64 hex) fajlja; alap: ~/.ao-psk. Ha letezik, a hid titkositva beszel.")
+    ap.add_argument("--gen-psk", action="store_true", help="uj PSK generalasa a --psk-file helyre, majd kilep")
+    ap.add_argument("--psk-optional", action="store_true", help="PSK nelkuli klienst is fogad (csak tesztre)")
     a = ap.parse_args()
     if a.list_models:
         gemini_list_models()
         return
+    if a.gen_psk:
+        if os.path.exists(a.psk_file):
+            sys.exit(f"mar van PSK: {a.psk_file} (torold, ha ujat akarsz)")
+        hexkey = os.urandom(32).hex()
+        with open(a.psk_file, "w", encoding="utf-8") as f:
+            f.write(hexkey + "\n")
+        print(f"uj PSK: {a.psk_file}")
+        print("a netbookon (egyszer):")
+        print(f"  mkdir /state/ai")
+        print(f"  write /state/ai/psk {hexkey}")
+        return
+    psk = load_psk(a.psk_file)
     if not a.provider:
         a.provider = "gemini" if (a.model or "").startswith("gemini") else "claude"
     if not a.model:
@@ -373,10 +351,12 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", a.port))
     srv.listen(4)
-    print(f"AO-OS hid: 0.0.0.0:{a.port}, szolgaltato {a.provider}, modell {a.model}, erofeszites {a.effort}", flush=True)
+    print(f"AO-OS hid: 0.0.0.0:{a.port}, szolgaltato {a.provider}, modell {a.model}, erofeszites {a.effort}, "
+          f"{'PSK-titkositas' if psk else 'titkositatlan (nincs ' + a.psk_file + ')'}", flush=True)
     while True:
         conn, addr = srv.accept()
-        threading.Thread(target=Session(conn, addr, a.provider, a.model, a.effort).serve, daemon=True).start()
+        threading.Thread(target=Session(conn, addr, a.provider, a.model, a.effort, psk, not a.psk_optional).serve,
+                         daemon=True).start()
 
 
 if __name__ == "__main__":

@@ -5,15 +5,58 @@
  *   agentd <feladat szovege...>
  * Hid cime: /state/ai/bridge, majd /etc/ai/bridge ("ip:port"). */
 #include "aolib.h"
+#include "crypto.h"
 
 #define MAGIC "AOP1"
 enum { F_HELLO = 1, F_HELLO_OK, F_CONTEXT, F_PROMPT, F_DELTA, F_TOOL_CALL, F_TOOL_RESULT, F_END, F_ERR, F_PING, F_PONG };
+#define FLAG_ENC 1
 
 static int sock;
 static char agent_name[32] = "agent";
 static char context_path[96];
-static u8 payload[65536];
+static u8 payload[65536 + 64];
+static u8 sealbuf[65536 + 64];
 static char result[16384 + 256];
+
+/* PSK-titkositas (docs/AOP.md): /state/ai/psk = 64 hex karakter */
+static u8 psk[32];
+static bool have_psk, enc;
+static struct aochan chan;
+static u8 cnonce[8];
+
+static int hexval(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+
+static bool parse_hex(const char *s, u8 *out, usize n)
+{
+    for (usize i = 0; i < n; i++) {
+        int a = hexval(s[2 * i]), b = hexval(s[2 * i + 1]);
+        if (a < 0 || b < 0) return false;
+        out[i] = (u8)(a * 16 + b);
+    }
+    return true;
+}
+
+static void to_hex(const u8 *in, usize n, char *out)
+{
+    static const char d[] = "0123456789abcdef";
+    for (usize i = 0; i < n; i++) { out[2 * i] = d[in[i] >> 4]; out[2 * i + 1] = d[in[i] & 15]; }
+    out[2 * n] = 0;
+}
+
+/* 8 veletlen bajt: TSC + tick + pid keverve ChaCha20-szal. A nonce egyediseget a hid
+ * sajat, jo minosegu veletlenje is biztositja; a biztonsag a PSK-n nyugszik. */
+static void rand8(u8 out[8])
+{
+    u32 lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    u8 nonce[12], block[64];
+    u64 t = ao_ticks(), p = (u64)ao_getpid();
+    nonce[0] = lo & 0xFF; nonce[1] = (lo >> 8) & 0xFF; nonce[2] = (lo >> 16) & 0xFF; nonce[3] = lo >> 24;
+    nonce[4] = hi & 0xFF; nonce[5] = (hi >> 8) & 0xFF; nonce[6] = t & 0xFF; nonce[7] = (t >> 8) & 0xFF;
+    nonce[8] = (t >> 16) & 0xFF; nonce[9] = (t >> 24) & 0xFF; nonce[10] = p & 0xFF; nonce[11] = (p >> 8) & 0xFF;
+    chacha20_block(psk, (u32)(t ^ lo), nonce, block);
+    memcpy(out, block + 16, 8);
+}
 
 static void put_u16(u8 *p, u16 v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 static void put_u32(u8 *p, u32 v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; p[2] = (v >> 16) & 0xFF; p[3] = v >> 24; }
@@ -49,11 +92,14 @@ static int send_frame(u16 type, const void *data, usize len)
     u8 hdr[12];
     memcpy(hdr, MAGIC, 4);
     put_u16(hdr + 4, type);
-    put_u16(hdr + 6, 0);
-    put_u32(hdr + 8, (u32)len);
+    put_u16(hdr + 6, enc ? FLAG_ENC : 0);
+    put_u32(hdr + 8, (u32)(enc ? len + 16 : len));
     int e = send_all(hdr, 12);
     if (e) return e;
-    return len ? send_all(data, len) : 0;
+    if (!enc) return len ? send_all(data, len) : 0;
+    if (len + 16 > sizeof sealbuf) return E_LIMIT;
+    aochan_seal(&chan, hdr, data, len, sealbuf);       /* AAD = a fejlec */
+    return send_all(sealbuf, len + 16);
 }
 
 static int recv_frame(u16 *type, usize *len)
@@ -63,10 +109,18 @@ static int recv_frame(u16 *type, usize *len)
     if (e) return e;
     if (memcmp(hdr, MAGIC, 4) != 0) return E_INVAL;
     *type = get_u16(hdr + 4);
+    u16 flags = get_u16(hdr + 6);
     u32 l = get_u32(hdr + 8);
-    if (l >= sizeof payload) return E_LIMIT;
+    if (l >= sizeof payload - 16) return E_LIMIT;
     e = recv_all(payload, l);
     if (e) return e;
+    if (flags & FLAG_ENC) {
+        if (!enc) return E_INVAL;                           /* titkositott keret kezfogas nelkul */
+        if (!aochan_open(&chan, hdr, payload, l, payload)) return E_INVAL;   /* rossz tag/szamlalo */
+        l -= 16;
+    } else if (enc && *type != F_ERR) {
+        return E_INVAL;                                     /* titkositatlan keret a csatornan */
+    }
     payload[l] = 0;
     *len = l;
     return 0;
@@ -321,17 +375,59 @@ int main(int argc, char **argv)
     }
     for (usize i = 0; addr[i]; i++) if (addr[i] == '\n' || addr[i] == '\r') { addr[i] = 0; break; }
 
-    ao_printf("[agent %s -> hid %s]\n", agent_name, addr);
+    /* PSK: /state/ai/psk (64 hex). Ha van, a kezfogas utan minden keret titkositott. */
+    static char pskhex[80];
+    if (read_file("/state/ai/psk", pskhex, sizeof pskhex) >= 64 && parse_hex(pskhex, psk, 32))
+        have_psk = true;
+
+    ao_printf("[agent %s -> hid %s%s]\n", agent_name, addr, have_psk ? ", PSK" : "");
     sock = ao_net_connect(addr);
     if (sock < 0) { ao_printf("agentd: kapcsolodas: %s\n", ao_errstr(sock)); return 3; }
 
-    char hello[64];
+    char hello[96];
     usize hl = 0;
     memcpy(hello, "agent=", 6); hl = 6;
     usize nl = strlen(agent_name);
     memcpy(hello + hl, agent_name, nl); hl += nl;
     memcpy(hello + hl, "\nversion=1\n", 11); hl += 11;
+    if (have_psk) {
+        rand8(cnonce);
+        memcpy(hello + hl, "nonce=", 6); hl += 6;
+        to_hex(cnonce, 8, hello + hl); hl += 16;
+        hello[hl++] = '\n';
+    }
     send_frame(F_HELLO, hello, hl);
+
+    /* kezfogas: HELLO_OK (vagy ERR) elott nem kuldunk tobbet */
+    {
+        u16 type;
+        usize len;
+        int e = recv_frame(&type, &len);
+        if (e) { ao_printf("agentd: kezfogas: %s\n", ao_errstr(e)); ao_close(sock); return 4; }
+        if (type == F_ERR) { ao_printf("[hid hiba: %s]\n", (char *)payload); ao_close(sock); return 5; }
+        if (type != F_HELLO_OK) { ao_puts("agentd: varatlan valasz a kezfogasban\n"); ao_close(sock); return 4; }
+        const char *p = (const char *)payload;
+        const char *np = NULL;
+        bool server_enc = false;
+        for (usize i = 0; i + 6 <= len; i++) {
+            if ((i == 0 || p[i - 1] == '\n') && memcmp(p + i, "nonce=", 6) == 0) np = p + i + 6;
+            if ((i == 0 || p[i - 1] == '\n') && memcmp(p + i, "enc=1", 5) == 0) server_enc = true;
+        }
+        for (usize i = 0; i < len; i++) if (payload[i] == '\n') { payload[i] = 0; break; }
+        if (have_psk) {
+            u8 snonce[8];
+            if (!server_enc || !np || !parse_hex(np, snonce, 8)) {
+                ao_puts("agentd: a netbookon van PSK, de a hid nem titkosit (inditsd --psk-file kapcsoloval)\n");
+                ao_close(sock);
+                return 6;
+            }
+            aochan_init(&chan, psk, cnonce, snonce, false);
+            enc = true;
+            ao_printf("[hid: %s, titkositott csatorna]\n", (char *)payload);
+        } else {
+            ao_printf("[hid: %s]\n", (char *)payload);
+        }
+    }
 
     /* kontextus: capability-lista + mentett kontextus */
     usize cl = 0;
@@ -360,8 +456,7 @@ int main(int argc, char **argv)
         int e = recv_frame(&type, &len);
         if (e) { ao_printf("\nagentd: kapcsolat: %s\n", ao_errstr(e)); rc = 4; break; }
         if (type == F_HELLO_OK) {
-            for (usize i = 0; i < len; i++) if (payload[i] == '\n') { payload[i] = 0; break; }
-            ao_printf("[hid: %s]\n", (char *)payload);
+            continue;                                   /* mar feldolgoztuk a kezfogasban */
         } else if (type == F_DELTA) {
             ao_write(1, payload, len);
             usize c = len < sizeof last - 1 - ll ? len : sizeof last - 1 - ll;

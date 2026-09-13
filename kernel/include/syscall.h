@@ -49,6 +49,7 @@ enum {
 #define E_IO      -14
 #define E_ROFS    -15
 #define E_BUSY    -16
+#define E_FAULT   -17   /* a task CPU-kivetellel (page fault, GP...) allt le */
 
 /* open flags */
 #define O_READ   1

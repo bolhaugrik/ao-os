@@ -13,6 +13,7 @@ sys.path.insert(0, ROOT)
 import ao  # noqa: E402
 
 PORT = 4499
+TEST_PSK = "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0"
 
 # (parancs, elvart reszlet a kimenetben); a "\n" a parancs vegen extra Entert kuld
 SESSIONS = [
@@ -25,6 +26,8 @@ SESSIONS = [
         ("cat boot.txt", "AO-OS ramdisk"),
         ("mount", "ramfs"),
         ("run hello x y\n", "rc=0"),
+        ("run fault", "rc=-17 (kivetel)"),
+        ("ps", "shell"),
         ("write /tmp/t.txt proba szoveg", "bajt"),
         ("cat /tmp/t.txt", "proba szoveg"),
         ("mkdir /tmp/project", "AO> "),
@@ -100,6 +103,12 @@ SESSIONS = [
         ("cat /state/x.txt", "telepites utan"),
         ("cat /project/src/hello.txt", "irta az agent"),
         ("echo árvíztűrő", "árvíztűrő"),
+        ("run cryptotest", "cryptotest: minden OK"),
+        ("mkdir /state/ai", "AO> "),
+        (f"write /state/ai/psk {TEST_PSK}", "bajt"),
+        ("rm /project/src/hello.txt", "AO> "),
+        ("agent coder titkositott proba", "csatorna: titkositott"),
+        ("cat /project/src/hello.txt", "irta az agent"),
     ],
 ]
 
@@ -115,9 +124,9 @@ def recv_until(s, needle, timeout):
         if not chunk:
             break
         buf += chunk
-        if needle.encode("latin-1") in buf:
-            return buf.decode("latin-1", errors="replace"), True
-    return buf.decode("latin-1", errors="replace"), needle == ""
+        if needle.encode("utf-8") in buf:
+            return buf.decode("utf-8", errors="replace"), True
+    return buf.decode("utf-8", errors="replace"), needle == ""
 
 
 def boot(t):
@@ -176,7 +185,7 @@ def main():
     # szimulalt AOP-hid a 9011-es porton; a vendeg a 10.0.2.100:9010 cimen eri el (guestfwd),
     # igy a valodi hid (9010) mellett is futhat a teszt
     ao.QEMU_GUESTFWD = "tcp:10.0.2.100:9010-tcp:127.0.0.1:9011"
-    bridge = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fake_bridge.py"), "9011"],
+    bridge = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fake_bridge.py"), "9011", TEST_PSK],
                               cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     import atexit
     atexit.register(bridge.kill)
@@ -208,7 +217,7 @@ def main():
             ok = False
             break
         for c, expect in cmds:
-            s.sendall(c.encode("latin-1") + b"\n")
+            s.sendall(c.encode("utf-8") + b"\n")
             out, found = recv_until(s, expect, 20 if c in ("install", "IGEN") else 8)
             log.append(out)
             if expect not in ("", "IGEN", "AO> "):
@@ -221,7 +230,7 @@ def main():
         s.close()
         time.sleep(0.5)
     full = "".join(log)
-    with open(os.path.join(ao.BUILD, "smoke.log"), "w", encoding="latin-1", errors="replace") as f:
+    with open(os.path.join(ao.BUILD, "smoke.log"), "w", encoding="utf-8", errors="replace") as f:
         f.write(full)
     for line in full.splitlines():
         if "boot -> prompt" in line or "100 sor" in line:

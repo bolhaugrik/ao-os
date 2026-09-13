@@ -10,6 +10,22 @@ A híd (`tools/bridge.py`) `--provider claude|gemini` kapcsolóval választ: Cla
 (`GEMINI_API_KEY`, alap `gemini-2.5-flash`, `--list-models` az elérhető nevekhez). A netbook felé
 mindkettő ugyanezt az AOP-t beszéli, az OS-en semmi nem függ a szolgáltatótól.
 
+## Titkosítás (PSK, AOP 1.1)
+
+Előre megosztott 32 bájtos kulcs: a PC-n `~/.ao-psk` (`python tools/bridge.py --gen-psk` készíti),
+a netbookon `/state/ai/psk` (64 hex karakter). Ha mindkét oldalon van kulcs:
+
+1. A kliens `HELLO`-ja `nonce=<8 bájt hex>` sort is tartalmaz (TSC + tick + pid ChaCha20-szal keverve).
+2. A híd `HELLO_OK`-ja `nonce=<8 bájt hex>` (os.urandom) és `enc=1` sort ad.
+3. Alkulcs = HChaCha20(psk, kliens_nonce ‖ híd_nonce), tehát kapcsolatonként más kulcs.
+4. Innentől minden keret: `flags` 0. bit = 1, payload = ChaCha20-Poly1305(ciphertext ‖ 16 bájt tag),
+   nonce = irány (`cli\0` vagy `srv\0`) ‖ 64 bites számláló, AAD = a 12 bájtos fejléc.
+   A számláló irányonként szigorúan növekszik: az ismételt vagy sorrenden kívüli keret elutasítva.
+
+PSK-val futó híd a kulcs nélküli klienst `ERR`-rel utasítja el; kulccsal futó kliens a titkosítatlan
+hidat nem fogadja el. Implementáció: `user/crypto.c` (RFC 8439, tesztvektorokkal: `run cryptotest`)
+és `tools/aocrypto.py` (`--selftest`). A kulcsot a netbook sosem küldi el; a híd API-kulcsa a PC-n marad.
+
 ## Keret
 
 ```

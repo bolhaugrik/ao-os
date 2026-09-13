@@ -1,81 +1,57 @@
 #!/usr/bin/env python3
 """AOP-kliens a PC-n: a netbook agentd-jet jatssza el, a hid tesztelesehez netbook nelkul.
-  python tests/aop_client.py [--port 9010] "feladat szovege"
-A fs_* eszkozoket egy memoria-beli mini fajlrendszerrel szolgalja ki, a task_run-t nem."""
+  python tests/aop_client.py [--port 9010] [--psk-file ~/.ao-psk] "feladat szovege"
+A fs_* eszkozoket egy memoria-beli mini fajlrendszerrel szolgalja ki, a task_run-t nem.
+Ha a PSK-fajl letezik, titkositott csatornat ker (mint a netbook a /state/ai/psk-val)."""
 import argparse
+import os
 import socket
-import struct
 import sys
 
-MAGIC = b"AOP1"
-HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
-
-
-def send_frame(sock, ftype, payload=b""):
-    if isinstance(payload, str):
-        payload = payload.encode("utf-8")
-    sock.sendall(MAGIC + struct.pack("<HHI", ftype, 0, len(payload)) + payload)
-
-
-def recv_exact(sock, n):
-    buf = b""
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            return None
-        buf += chunk
-    return buf
-
-
-def recv_frame(sock):
-    hdr = recv_exact(sock, 12)
-    if hdr is None or hdr[:4] != MAGIC:
-        return None, None
-    ftype, _f, length = struct.unpack("<HHI", hdr[4:])
-    return ftype, (recv_exact(sock, length) if length else b"")
-
-
-def parse_call(payload):
-    """bajtokon dolgozik: a hossz-mezo bajtszam, nem karakterszam (ekezetek!)"""
-    tid, name, rest = payload.split(b"\n", 2)
-    args = {}
-    pos = 0
-    while pos < len(rest):
-        nl = rest.find(b"\n", pos)
-        if nl < 0:
-            break
-        key = rest[pos:nl].decode("utf-8", errors="replace")
-        nl2 = rest.find(b"\n", nl + 1)
-        length = int(rest[nl + 1:nl2])
-        val = rest[nl2 + 1:nl2 + 1 + length].decode("utf-8", errors="replace")
-        args[key] = val
-        pos = nl2 + 1 + length + 1
-    return tid.decode(), name.decode(), args
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import aocrypto  # noqa: E402
+from aop import (Conn, parse_tool_call, parse_kv, load_psk, default_psk_path,  # noqa: E402
+                 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=9010)
+    ap.add_argument("--psk-file", default=os.environ.get("AO_PSK_FILE", default_psk_path()))
     ap.add_argument("task", nargs="+")
     a = ap.parse_args()
+    psk = load_psk(a.psk_file)
     files = {"/project/README.txt": "teszt projekt\n"}
-    s = socket.create_connection((a.host, a.port), timeout=600)
-    send_frame(s, HELLO, "agent=pc-teszt\nversion=1\n")
-    send_frame(s, CONTEXT, "Capability-lista (a kernel ezt kenyszeriti ki):\nagent pc-teszt\n  console\n  fs.read /project/**\n  fs.write /project/src/**\n")
-    send_frame(s, PROMPT, " ".join(a.task))
+    conn = Conn(socket.create_connection((a.host, a.port), timeout=600))
+    cnonce = os.urandom(8)
+    hello = "agent=pc-teszt\nversion=1\n" + (f"nonce={cnonce.hex()}\n" if psk else "")
+    conn.send(HELLO, hello)
+    ftype, payload = conn.recv()
+    if ftype == ERR:
+        sys.exit(f"[hid hiba: {payload.decode(errors='replace')}]")
+    if ftype != HELLO_OK:
+        sys.exit("varatlan valasz a kezfogasban")
+    kv = parse_kv(payload)
+    if psk:
+        if kv.get("enc") != "1" or "nonce" not in kv:
+            sys.exit("a kliensnek van PSK-ja, de a hid nem titkosit")
+        conn.chan = aocrypto.Channel(psk, cnonce, bytes.fromhex(kv["nonce"]), is_server=False)
+        print(f"[hid: model={kv.get('model')}, titkositott csatorna]")
+    else:
+        print(f"[hid: model={kv.get('model')}]")
+    conn.send(CONTEXT, "Capability-lista (a kernel ezt kenyszeriti ki):\nagent pc-teszt\n  console\n  fs.read /project/**\n  fs.write /project/src/**\n")
+    conn.send(PROMPT, " ".join(a.task))
     while True:
-        ftype, payload = recv_frame(s)
+        ftype, payload = conn.recv()
         if ftype is None:
-            print("\n[kapcsolat zarva]")
+            print("\n[kapcsolat zarva vagy hibas keret]")
             break
-        if ftype == HELLO_OK:
-            print(f"[hid: {payload.decode().strip()}]")
-        elif ftype == DELTA:
+        if ftype == DELTA:
             sys.stdout.write(payload.decode("utf-8", errors="replace"))
             sys.stdout.flush()
         elif ftype == TOOL_CALL:
-            tid, name, args = parse_call(payload)
+            tid, name, args = parse_tool_call(payload)
             print(f"\n  [tool {name} {args}]")
             if name == "fs_write":
                 p = args.get("path", "")
@@ -100,7 +76,7 @@ def main():
                 res = "ok", "ok"
             else:
                 res = "error", "E_NOENT: nincs ilyen program (task_run a PC-tesztben nem elerheto)"
-            send_frame(s, TOOL_RESULT, f"{tid}\n{res[0]}\n{res[1]}")
+            conn.send(TOOL_RESULT, f"{tid}\n{res[0]}\n{res[1]}")
         elif ftype == END:
             print(f"\n[vege: {payload.decode().strip()}]")
             break
@@ -108,8 +84,8 @@ def main():
             print(f"\n[hid hiba: {payload.decode(errors='replace')}]")
             break
         elif ftype == PING:
-            send_frame(s, PONG)
-    s.close()
+            conn.send(PONG)
+    conn.close()
     print("fajlok:", {k: v[:40] for k, v in files.items()})
 
 

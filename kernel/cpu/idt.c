@@ -65,6 +65,8 @@ static const char *exc_name[32] = {
 void isr_dispatch(struct regs *r)
 {
     if (r->vector < 32) {
+        if ((r->cs & 3) != 0)                       /* ring 3: a task hibaja, nem a kernele */
+            panic_user_exception(exc_name[r->vector], r);
         panic_exception(exc_name[r->vector], r);
     }
     if (r->vector >= IRQ_BASE && r->vector < IRQ_BASE + 16) {

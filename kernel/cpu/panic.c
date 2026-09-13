@@ -7,6 +7,8 @@
 #include "../drv/serial.h"
 #include "../fs/disk.h"
 #include "../lib/fmt.h"
+#include "../task/task.h"
+#include "syscall.h"
 
 static void out(char c, void *ctx)
 {
@@ -52,6 +54,19 @@ static void store_dump(const char *name, struct regs *r)
              "KIVETEL %lu %s err=%lx rip=%lx rsp=%lx cr2=%lx rax=%lx rbx=%lx rcx=%lx rdx=%lx rsi=%lx rdi=%lx rbp=%lx",
              r->vector, name, r->err, r->rip, r->rsp, read_cr2(), r->rax, r->rbx, r->rcx, r->rdx, r->rsi, r->rdi, r->rbp);
     panic_store_write(buf);
+}
+
+/* Ring 3-bol jovo kivetel: nem a gep, csak a task all le (rc = E_FAULT). A dump rovid,
+ * a shell folytatodik; a szulo a wait-ben megkapja a hibakodot. */
+NORETURN void panic_user_exception(const char *name, struct regs *r)
+{
+    cli();
+    struct task *t = task_current();
+    pprintf("\n[task %s (pid %u): KIVETEL %lu %s err=0x%lx rip=%lx rsp=%lx cr2=%lx -> leallitva]\n",
+            t ? t->name : "?", t ? t->id : 0, r->vector, name, r->err, r->rip, r->rsp, read_cr2());
+    if (console_ready())
+        console_flush();
+    task_exit(E_FAULT);
 }
 
 NORETURN void panic_exception(const char *name, struct regs *r)

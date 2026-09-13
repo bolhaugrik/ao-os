@@ -105,6 +105,7 @@ const char *ao_errstr(int e)
     case E_IO: return "E_IO";
     case E_ROFS: return "E_ROFS";
     case E_BUSY: return "E_BUSY";
+    case E_FAULT: return "E_FAULT";
     default: return "?";
     }
 }

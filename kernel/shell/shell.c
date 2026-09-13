@@ -75,6 +75,7 @@ static const char *errstr(int e)
     case E_IO: return "I/O hiba";
     case E_ROFS: return "csak olvashato";
     case E_BUSY: return "foglalt";
+    case E_FAULT: return "kivetel (E_FAULT)";
     default: return "hiba";
     }
 }
@@ -518,7 +519,7 @@ static void run_with_caps(const struct capset *cs, int argc, char **argv)
     u64 dt = rdtsc() - t0;
     console_flush();
     kprintf("[%s: pid %d, rc=%d%s, %lu ms]\n", argv[0], pid, status,
-            status == E_TIMEOUT ? " (hatarido/kill)" : "", tsc_to_ms(dt));
+            status == E_TIMEOUT ? " (hatarido/kill)" : status == E_FAULT ? " (kivetel)" : "", tsc_to_ms(dt));
 }
 
 static void cmd_run(int argc, char **argv)
