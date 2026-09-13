@@ -1,10 +1,11 @@
-/* TCP: nehany aktiv kapcsolat, stop-and-wait kuldes (egy szegmens uton, ujrakuldes),
- * sorrendben erkezo adat fogadasa 16 KiB-os pufferrel, nincs kiszolgalo oldal (listen). */
+/* TCP: nehany aktiv kapcsolat, csuszo ablakos kuldes (32 KiB uton, go-back-N ujrakuldes),
+ * sorrendben erkezo adat fogadasa 64 KiB-os pufferrel, nincs kiszolgalo oldal (listen). */
 #pragma once
 #include "types.h"
 
 #define TCP_SOCKS 4
 #define TCP_RXBUF 65536
+#define TCP_TXBUF 32768     /* kuldo ablak: ennyi lehet uton nyugtazatlanul */
 #define TCP_MSS   1460      /* Ethernet MTU: 1500 - 20 IP - 20 TCP (FRAME_MAX 1536-ba belefer) */
 
 void tcp_init(void);

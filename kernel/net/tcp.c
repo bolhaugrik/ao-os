@@ -8,6 +8,10 @@
 #include "../mm/kheap.h"
 #include "../lib/string.h"
 
+/* Kuldes: csuszo ablak (TCP_TXBUF bajt uton lehet, a partner ablakan belul), go-back-N
+ * ujrakuldes RTO-nal. Fogadas: sorrendben erkezo adat gyurube, ablak-frissites kiolvasaskor.
+ * A stop-and-wait kuldes a Windows kesleltetett ACK-ja miatt (200 ms/szegmens) ~7 KB/s volt. */
+
 enum { T_CLOSED = 0, T_SYN_SENT, T_ESTABLISHED, T_FIN_WAIT, T_CLOSE_WAIT, T_LAST_ACK, T_TIME_WAIT };
 #define F_FIN 1
 #define F_SYN 2
@@ -27,12 +31,13 @@ struct sock {
     u32 rip;
     u16 rport, lport;
     u32 snd_nxt, snd_una, rcv_nxt;
-    u8 *rx;                     /* gyuru */
+    u32 snd_wnd;                /* a partner hirdetett ablaka */
+    u8 *rx;                     /* fogado gyuru */
     u32 rx_head, rx_tail, rx_count;
-    /* uton levo szegmens */
-    u8 tx_buf[TCP_MSS];
-    u32 tx_len, tx_seq;
-    u8 tx_flags;
+    u8 *tx;                     /* kuldo gyuru: a snd_una-tol meg nem nyugtazott + meg nem kuldott bajtok */
+    u32 tx_head, tx_len;        /* tx_head: a snd_una bajt indexe; tx_len: bajtok snd_una-tol */
+    u8  ctl_flags;              /* uton levo SYN/FIN (adat nelkul) */
+    u32 ctl_seq;
     u64 rto_tick;
     int retries;
     bool peer_closed;
@@ -87,21 +92,49 @@ static int send_seg(struct sock *s, u32 seq, u8 flags, const void *data, usize l
     return net_send_ip(s->rip, 6, pkt, sizeof *h + len);
 }
 
-/* uton levo szegmens beallitasa es elso kuldese */
-static int transmit(struct sock *s, u8 flags, const void *data, usize len)
+static inline u32 inflight(struct sock *s) { return s->snd_nxt - s->snd_una; }
+
+/* a kuldo gyuru [off, off+n) darabja a snd_una-tol szamitva -> linearis pufferbe */
+static void tx_gather(struct sock *s, u32 off, u8 *out, u32 n)
 {
-    s->tx_seq = s->snd_nxt;
-    s->tx_flags = flags;
-    s->tx_len = (u32)len;
-    if (len) memcpy(s->tx_buf, data, len);
-    s->retries = 0;
-    s->rto_tick = pit_ticks() + 50;         /* 500 ms */
-    u32 adv = (u32)len + ((flags & (F_SYN | F_FIN)) ? 1 : 0);
-    s->snd_nxt += adv;
-    return send_seg(s, s->tx_seq, flags, data, len);
+    u32 i = (s->tx_head + off) % TCP_TXBUF;
+    for (u32 k = 0; k < n; k++) { out[k] = s->tx[i]; i = (i + 1) % TCP_TXBUF; }
 }
 
-static bool inflight(struct sock *s) { return s->snd_una != s->snd_nxt; }
+static void arm_rto(struct sock *s)
+{
+    s->rto_tick = pit_ticks() + 50;         /* 500 ms */
+}
+
+/* uj szegmensek kuldese, amig van adat es fer az ablakba (IF=0 mellett) */
+static void tx_pump(struct sock *s)
+{
+    u32 wnd = s->snd_wnd ? s->snd_wnd : TCP_MSS;   /* zero window: egy szegmensnyi proba */
+    if (wnd > TCP_TXBUF) wnd = TCP_TXBUF;
+    while (inflight(s) < s->tx_len && inflight(s) < wnd) {
+        u32 off = inflight(s);
+        u32 n = s->tx_len - off;
+        if (n > TCP_MSS) n = TCP_MSS;
+        if (n > wnd - inflight(s)) n = wnd - inflight(s);
+        u8 buf[TCP_MSS];
+        tx_gather(s, off, buf, n);
+        bool first = inflight(s) == 0;
+        if (send_seg(s, s->snd_nxt, F_ACK | F_PSH, buf, n)) break;
+        s->snd_nxt += n;
+        if (first) { s->retries = 0; arm_rto(s); }
+    }
+}
+
+/* vezerlo szegmens (SYN/FIN) kuldese es nyilvantartasa */
+static int transmit_ctl(struct sock *s, u8 flags)
+{
+    s->ctl_seq = s->snd_nxt;
+    s->ctl_flags = flags;
+    s->retries = 0;
+    arm_rto(s);
+    s->snd_nxt += 1;
+    return send_seg(s, s->ctl_seq, flags, NULL, 0);
+}
 
 void tcp_tick(void)
 {
@@ -114,14 +147,22 @@ void tcp_tick(void)
             continue;
         }
         if (inflight(s) && now >= s->rto_tick) {
-            if (++s->retries > 6) {
+            if (++s->retries > 8) {
                 s->reset = true;
                 s->state = T_CLOSED;
                 waitq_wake_all(&s->q);
                 continue;
             }
             s->rto_tick = now + 50 * (u64)(1 << (s->retries > 4 ? 4 : s->retries));
-            send_seg(s, s->tx_seq, s->tx_flags, s->tx_buf, s->tx_len);
+            if (s->ctl_flags) {
+                send_seg(s, s->ctl_seq, s->ctl_flags, NULL, 0);
+            } else {
+                /* go-back-N: az elso nyugtazatlan szegmens ujra; a tobbi az ACK utan megy */
+                u32 n = inflight(s) < TCP_MSS ? inflight(s) : TCP_MSS;
+                u8 buf[TCP_MSS];
+                tx_gather(s, 0, buf, n);
+                send_seg(s, s->snd_una, F_ACK | F_PSH, buf, n);
+            }
         }
     }
 }
@@ -152,6 +193,7 @@ void tcp_rx(u32 src, u32 dst, const u8 *seg, usize len)
     const u8 *data = seg + hl;
     usize dl = len - hl;
     s->last_activity = pit_ticks();
+    s->snd_wnd = ntohs(h->win);
 
     if (fl & F_RST) { s->reset = true; s->state = T_CLOSED; waitq_wake_all(&s->q); return; }
 
@@ -159,6 +201,7 @@ void tcp_rx(u32 src, u32 dst, const u8 *seg, usize len)
         if ((fl & (F_SYN | F_ACK)) == (F_SYN | F_ACK) && ack == s->snd_nxt) {
             s->rcv_nxt = seq + 1;
             s->snd_una = ack;
+            s->ctl_flags = 0;
             s->state = T_ESTABLISHED;
             send_seg(s, s->snd_nxt, F_ACK, NULL, 0);
             waitq_wake_all(&s->q);
@@ -166,17 +209,29 @@ void tcp_rx(u32 src, u32 dst, const u8 *seg, usize len)
         return;
     }
 
-    /* ACK feldolgozasa */
+    /* ACK feldolgozasa: kumulativ, a kuldo gyuru elejet szabaditja fel */
     if ((fl & F_ACK) && inflight(s)) {
         i32 d = (i32)(ack - s->snd_una);
         if (d > 0 && (i32)(ack - s->snd_nxt) <= 0) {
-            s->snd_una = ack;
-            if (!inflight(s)) {
-                if (s->state == T_FIN_WAIT && s->tx_flags & F_FIN) { s->state = T_TIME_WAIT; }
-                if (s->state == T_LAST_ACK) { s->state = T_CLOSED; }
-                waitq_wake_all(&s->q);
+            if (s->ctl_flags) {
+                /* FIN nyugtazasa: az egyetlen uton levo bajt a vezerlo */
+                s->snd_una = ack;
+                s->ctl_flags = 0;
+                if (s->state == T_FIN_WAIT) s->state = T_TIME_WAIT;
+                if (s->state == T_LAST_ACK) s->state = T_CLOSED;
+            } else {
+                u32 n = (u32)d;
+                if (n > s->tx_len) n = s->tx_len;
+                s->tx_head = (s->tx_head + n) % TCP_TXBUF;
+                s->tx_len -= n;
+                s->snd_una = ack;
+                if (inflight(s)) { s->retries = 0; arm_rto(s); }
             }
+            tx_pump(s);
+            waitq_wake_all(&s->q);
         }
+    } else if (fl & F_ACK) {
+        tx_pump(s);                         /* ablak-frissites: mehet tovabb */
     }
 
     /* adat: csak sorrendben */
@@ -224,19 +279,23 @@ int tcp_connect(u32 ip, u16 port, u32 timeout_ms)
     if (id < 0) return E_LIMIT;
     struct sock *s = &socks[id];
     if (s->rx) kfree(s->rx);
+    if (s->tx) kfree(s->tx);
     memset(s, 0, sizeof *s);
     s->rx = kmalloc(TCP_RXBUF);
+    s->tx = kmalloc(TCP_TXBUF);
+    if (!s->rx || !s->tx) { if (s->rx) kfree(s->rx); if (s->tx) kfree(s->tx); s->rx = s->tx = NULL; return E_NOMEM; }
     s->rip = ip;
     s->rport = port;
     s->lport = net_ephemeral_port();
     s->snd_nxt = (u32)(rdtsc() & 0xFFFFFF) << 8;
     s->snd_una = s->snd_nxt;
+    s->snd_wnd = TCP_MSS;
     s->state = T_SYN_SENT;
     s->last_activity = pit_ticks();
     u8 mac[6];
     int e = net_resolve(net_next_hop(ip), mac, 2000);   /* ARP elore, blokkolva */
     if (e) { s->state = T_CLOSED; return e; }
-    e = transmit(s, F_SYN, NULL, 0);
+    e = transmit_ctl(s, F_SYN);
     if (e) { s->state = T_CLOSED; return e; }
     u64 end = pit_ticks() + timeout_ms / 10 + 1;
     while (s->state == T_SYN_SENT && pit_ticks() < end) {
@@ -253,6 +312,7 @@ int tcp_connect(u32 ip, u16 port, u32 timeout_ms)
     return id;
 }
 
+/* a bajtokat a kuldo gyurube masolja (ha megtelt, var), a kuldes az ablak szerint megy */
 isize tcp_send(int id, const void *buf, usize n)
 {
     if (id < 0 || id >= TCP_SOCKS) return E_BADF;
@@ -261,19 +321,21 @@ isize tcp_send(int id, const void *buf, usize n)
     usize done = 0;
     while (done < n) {
         if (s->state != T_ESTABLISHED && s->state != T_CLOSE_WAIT) return done ? (isize)done : E_PIPE;
-        usize c = n - done < TCP_MSS ? n - done : TCP_MSS;
         cli();
-        int e = transmit(s, F_ACK | F_PSH, p + done, c);
-        if (e) { sti(); return done ? (isize)done : e; }
-        /* feltetel + blokkolas IF=0 mellett, kulonben az IRQ-bol jovo ACK ebresztese elveszhet */
-        while (inflight(s) && s->state != T_CLOSED) {
+        while (s->tx_len >= TCP_TXBUF && s->state != T_CLOSED) {
             wait_event(s);              /* visszateres utan IF=1 */
             if (task_current() && task_current()->killed) return E_TIMEOUT;
             cli();
         }
-        sti();
-        if (s->state == T_CLOSED) return done ? (isize)done : E_PIPE;
+        if (s->state == T_CLOSED) { sti(); return done ? (isize)done : E_PIPE; }
+        u32 room = TCP_TXBUF - s->tx_len;
+        u32 c = n - done < room ? (u32)(n - done) : room;
+        u32 i = (s->tx_head + s->tx_len) % TCP_TXBUF;
+        for (u32 k = 0; k < c; k++) { s->tx[i] = p[done + k]; i = (i + 1) % TCP_TXBUF; }
+        s->tx_len += c;
         done += c;
+        tx_pump(s);
+        sti();
     }
     return (isize)done;
 }
@@ -316,17 +378,21 @@ int tcp_close(int id)
     struct sock *s = &socks[id];
     if (s->state == T_ESTABLISHED || s->state == T_CLOSE_WAIT) {
         cli();
-        while (inflight(s) && s->state != T_CLOSED) { wait_event(s); cli(); }
+        u64 end = pit_ticks() + 3000;   /* max 30 s a fuggo adatok nyugtazasara */
+        while (inflight(s) && s->state != T_CLOSED && pit_ticks() < end) { task_block_timeout(&s->q, 200); cli(); }
         int next = s->state == T_CLOSE_WAIT ? T_LAST_ACK : T_FIN_WAIT;
         s->state = next;
-        transmit(s, F_FIN | F_ACK, NULL, 0);
+        transmit_ctl(s, F_FIN | F_ACK);
         sti();
-        u64 end = pit_ticks() + 200;
+        end = pit_ticks() + 200;
         while (s->state != T_CLOSED && s->state != T_TIME_WAIT && pit_ticks() < end) {
             if (task_current()) task_sleep_ms(10); else idle_enter();
         }
     }
     s->state = s->state == T_TIME_WAIT ? T_TIME_WAIT : T_CLOSED;
-    if (s->state == T_CLOSED && s->rx) { kfree(s->rx); s->rx = NULL; }
+    if (s->state == T_CLOSED) {
+        if (s->rx) { kfree(s->rx); s->rx = NULL; }
+        if (s->tx) { kfree(s->tx); s->tx = NULL; }
+    }
     return 0;
 }

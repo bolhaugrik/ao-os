@@ -10,4 +10,4 @@ fs.write  /tmp/clip.txt
 fs.read   /state/**
 fs.read   /project/**
 mem       4M
-deadline  30s
+deadline  600s
