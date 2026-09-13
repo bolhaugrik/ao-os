@@ -16,7 +16,8 @@
 #include "../lib/string.h"
 #include "../lib/fmt.h"
 
-#define AO_VERSION_STR "0.1-phase2"
+#include "version.h"
+#define AO_VERSION_STR AO_VERSION
 
 /* ---------------------------------------------------------------- user-mutatok */
 static bool user_range_ok(const struct task *t, u64 p, u64 n)
@@ -314,6 +315,8 @@ static int sys_sysinfo(struct task *t, u64 uptr_)
     si->ntasks = task_count();
     si->pid = t->id;
     strlcpy(si->version, AO_VERSION_STR, sizeof si->version);
+    si->con_cols = console_cols();
+    si->con_rows = console_rows();
     return 0;
 }
 

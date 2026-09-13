@@ -50,8 +50,9 @@ TOOL_DEFS = [
 # ---------------------------------------------------------------- keretezes (tools/aop.py)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, load_psk, default_psk_path,  # noqa: E402
-                 parse_file, HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG,
-                 FILE, CLIP_GET, CLIP)
+                 parse_file, parse_kv, HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR,
+                 PING, PONG, FILE, CLIP_GET, CLIP, PROJECT, IMPRINT)
+import projector  # noqa: E402
 import aocrypto  # noqa: E402
 
 
@@ -352,6 +353,17 @@ class Session:
                     except Exception as e:  # tkinter/fajl-hiba
                         self.conn.send(ERR, f"{type(e).__name__}: {e}"[:300])
                     self.conn.send(END, "stop=file\n")
+                elif ftype == PROJECT:
+                    kv = parse_kv(payload)
+                    q = kv.get("q", "")
+                    self.log(f"projector: {q!r}")
+                    try:
+                        imp = projector.project(q, int(kv.get("depth", "0") or 0), log=self.log)
+                        data = projector.to_json(imp)
+                        self.log(f"lenyomat: {len(imp['nodes'])} csomopont, {len(data)} bajt")
+                        self.conn.send(IMPRINT, data)
+                    except Exception as e:  # halozati/HTML-hiba a modellnek szolo szoveg nelkul
+                        self.conn.send(ERR, f"projector: {type(e).__name__}: {e}"[:300])
                 elif ftype == CLIP_GET:
                     try:
                         text = clipboard_get()

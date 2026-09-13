@@ -68,6 +68,11 @@ A netbookon `/state/ai/bridge` a híd címe (`ip:port`), `/state/ai/psk` a kulcs
 `shot` (a képernyő szövege a PC `shots/` mappájába), `copy` / `paste` (a PC vágólapja mindkét irányba).
 A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`.
 
+**Projector:** `projector https://…` vagy `projector <kérdés>`: a híd letölti és lecsupaszítja az oldalt
+(kérdésnél a DuckDuckGo találati lapját), a netbook egy szemantikus lenyomatot kap (JSON, `docs/AOP.md`),
+és a teljes képernyőn rendezi el: vázlat, tartalom, linkek; nyilak, Tab, Enter, Backspace, `/`, `s`, `q`.
+`projector --dump …` szövegként írja ki. PC-n külön is próbálható: `python tools\projector.py <cím | kérdés>`.
+
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 `time`, `date` és a `set` alparancsuk a CMOS órát kezeli; `status` az állapot-összefoglaló; Tab kiegészít.
 

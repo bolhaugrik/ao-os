@@ -25,6 +25,7 @@ static bool all_dirty;
 static u32 palette[16];
 static u32 last_cursor_col = ~0u, last_cursor_row = ~0u;
 static u64 base_seq;            /* a gyuru legregebbi soranak sorszama (boot ota monoton) */
+static bool wrap_pending;       /* az utolso cella utan fuggo sortores */
 
 /* ANSI-parser allapot */
 static int esc_state;           /* 0 nincs, 1 ESC, 2 CSI */
@@ -116,6 +117,7 @@ void console_get_cursor(u32 *c, u32 *r) { *c = cur_col; *r = cur_row; }
 
 void console_set_col(u32 col)
 {
+    wrap_pending = false;
     cur_col = col < cols ? col : cols - 1;
     dirty_rows |= 1ULL << cur_row;
 }
@@ -148,14 +150,22 @@ static void newline(void)
     all_dirty = true;
 }
 
+/* Halasztott sortores (mint a VT100-on): az utolso cella irasa utan a kurzor ott marad, es csak
+ * a kovetkezo karakter valt sort. Igy a teljes kepernyos programok az also sor vegere is irhatnak. */
 static void put_raw(u8 c)
 {
+    if (wrap_pending) {
+        wrap_pending = false;
+        newline();
+    }
     struct cell *l = line(nlines - rows + cur_row);
     l[cur_col].ch = c;
     l[cur_col].attr = cur_attr;
     mark_row(cur_row);
-    if (++cur_col >= cols)
-        newline();
+    if (cur_col + 1 >= cols)
+        wrap_pending = true;
+    else
+        cur_col++;
 }
 
 static void apply_sgr(void)
@@ -205,9 +215,16 @@ void console_putc(char ch)
         }
         if (esc_nargs < 4) esc_nargs++;
         esc_state = 0;
+        if (c != 'm') wrap_pending = false;          /* kurzormozgatas: a fuggo sortores torlodik */
         if (c == 'm') apply_sgr();
         else if (c == 'J') console_clear();
-        else if (c == 'H') { cur_col = 0; cur_row = 0; }
+        else if (c == 'H' || c == 'f') {            /* ESC[H vagy ESC[sor;oszlopH (1-alapu) */
+            u32 r = esc_args[0] ? (u32)esc_args[0] - 1 : 0;
+            u32 col = esc_nargs >= 2 && esc_args[1] ? (u32)esc_args[1] - 1 : 0;
+            cur_row = r < rows ? r : rows - 1;
+            cur_col = col < cols ? col : cols - 1;
+            mark_row(cur_row);
+        }
         else if (c == 'K') {
             struct cell *l = line(nlines - rows + cur_row);
             for (u32 i = cur_col; i < cols; i++) { l[i].ch = ' '; l[i].attr = cur_attr; }
@@ -234,9 +251,10 @@ void console_putc(char ch)
     }
     switch (c) {
     case 0x1B: esc_state = 1; return;
-    case '\n': mark_row(cur_row); newline(); return;
-    case '\r': cur_col = 0; return;
+    case '\n': mark_row(cur_row); wrap_pending = false; newline(); return;
+    case '\r': cur_col = 0; wrap_pending = false; return;
     case '\b':
+        if (wrap_pending) { wrap_pending = false; return; }
         if (cur_col) {
             cur_col--;
             struct cell *l = line(nlines - rows + cur_row);
@@ -266,6 +284,7 @@ void console_clear(void)
         newline();
     cur_col = 0;
     cur_row = 0;
+    wrap_pending = false;
     all_dirty = true;
 }
 

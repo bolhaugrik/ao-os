@@ -81,8 +81,8 @@ KERNEL_C = [
 KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm", "kernel/task/sched.asm"]
 
 # AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
-USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault"]
-USER_LIB = ["user/aolib.c", "user/crypto.c", "kernel/lib/fmt.c", "kernel/lib/string.c"]
+USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector"]
+USER_LIB = ["user/aolib.c", "user/crypto.c", "user/aop.c", "user/json.c", "kernel/lib/fmt.c", "kernel/lib/string.c"]
 USER_CFLAGS = [
     "--target=x86_64-elf",
     "-ffreestanding", "-fno-builtin", "-nostdlib", "-nostdinc",

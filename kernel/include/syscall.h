@@ -66,6 +66,7 @@ struct sysinfo {
     u32 ntasks;
     u32 pid;
     char version[16];
+    u32 con_cols, con_rows;     /* konzol merete cellakban */
 };
 
 #define NAME_MAX 63

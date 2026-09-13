@@ -128,6 +128,13 @@ SESSIONS = [
         ("paste /tmp/p.txt", "bajt"),
         ("cat /tmp/p.txt", "echo vagolap-ok"),
         ("paste", "paste: 16 bajt"),
+        ("\r", "vagolap-ok"),                 # a parancssorba toltott sor futtatasa (Enter)
+        ("projector --dump http://teszt.local/lap", "[item 4] Masodik elem"),
+        ("projector --dump hiba", "[hid hiba: projector-teszt-hiba]"),
+        ("projector http://teszt.local/lap", "PROJECTOR"),
+        ("\x1b[B\x1b[Bs", "mentve: /state/projector/teszt-lap-cime.json"),
+        ("q", "projector: Teszt lap cime ("),
+        ("cat /state/projector/teszt-lap-cime.json", "\"t\":\"quote\""),
     ],
 ]
 

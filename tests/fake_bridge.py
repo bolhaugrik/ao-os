@@ -10,10 +10,32 @@ import sys
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
-from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, parse_file,  # noqa: E402
-                 HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, PING, PONG, FILE, CLIP_GET, CLIP)
+from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, parse_file, parse_kv,  # noqa: E402
+                 HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, ERR, PING, PONG, FILE, CLIP_GET, CLIP,
+                 PROJECT, IMPRINT)
+import projector  # noqa: E402
 
 BUILD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build")
+
+# a projector-teszt oldala: zaj (nav, script), cim, fejezetek, bekezdes, lista, idezet, kod, tablazat, linkek
+SAMPLE_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Teszt lap cime</title>
+<meta name="description" content="Rovid leiras a teszt laprol, a lenyomat note-csomopontja.">
+<script>var zaj = 1;</script><style>.x{color:red}</style></head>
+<body><nav><a href="/">Fooldal</a> <a href="/menu">Menu</a> <a href="/kapcsolat">Kapcsolat</a></nav>
+<div class="cookie-banner">Ez az oldal sutiket hasznal, fogadd el.</div>
+<main><h1>Elso fejezet</h1>
+<p>Ez egy eleg hosszu bekezdes, hogy a kinyero megtartsa: a projector a weboldal tartalmat csupaszitja le,
+es csak az informaciot adja at a netbooknak, kepek es stiluslapok nelkul. Az ekezetes betuk: árvíztűrő tükörfúrógép.</p>
+<h2>Masodik fejezet</h2>
+<ul><li>Elso elem a listaban</li><li>Masodik elem, kicsit hosszabb szoveggel</li><li>Harmadik elem</li></ul>
+<blockquote>Egy idezet, amit kulon jelolunk a kepernyon.</blockquote>
+<pre>int main(void) {
+    return 0;
+}</pre>
+<table><tr><th>Nev</th><th>Ertek</th></tr><tr><td>boot</td><td>224 ms</td></tr><tr><td>ai szia</td><td>1,26 s</td></tr></table>
+<p>Tovabbi olvasnivalo: <a href="/masodik-lap">a masodik teszt lap</a> es a <a href="https://example.com/kulso">kulso hivatkozas</a>.
+Ez a bekezdes is eleg hosszu ahhoz, hogy megmaradjon a lenyomatban.</p>
+</main><footer>Lablec, copyright, zaj.</footer></body></html>"""
 
 
 def tool_call(conn, tid, name, **kw):
@@ -76,6 +98,14 @@ def handle(sock, addr, psk):
                 conn.send(END, "stop=file\n")
             elif ftype == CLIP_GET:
                 conn.send(CLIP, "echo vagolap-ok\n")
+            elif ftype == PROJECT:
+                q = parse_kv(payload).get("q", "")
+                print(f"projector: {q!r}", flush=True)
+                if q == "hiba":
+                    conn.send(ERR, "projector-teszt-hiba")
+                else:
+                    imp = projector.extract(SAMPLE_HTML, q if q.startswith("http") else "http://teszt.local/lap")
+                    conn.send(IMPRINT, projector.to_json(imp))
             elif ftype == PING:
                 conn.send(PONG)
     except (ConnectionError, OSError) as e:

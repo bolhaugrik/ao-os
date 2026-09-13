@@ -57,9 +57,31 @@ Minden szám little-endian.
 | 13 | CLIP_GET | OS → híd | üres; a PC vágólapját kéri |
 | 14 | CLIP | híd → OS | a vágólap szövege (UTF-8) |
 
+| 15 | PROJECT | OS → híd | `q=<cím vagy kérdés>\ndepth=<n>\n` |
+| 16 | IMPRINT | híd → OS | a lenyomat JSON-ban (lásd lent), legfeljebb 60 000 bájt |
+
 A 12–14 típusok (AOP 1.2) a `shot`, `copy`, `paste` parancsokat szolgálják: az `agentd` `--file` / `--clip`
 módban, a `clip` manifesttel (`/etc/agents/clip.cap`) küldi őket, a kézfogás és a titkosítás ugyanaz.
 A híd a PING-re a kézfogás előtt is PONG-gal felel: ezzel ellenőrzi a netbook indításkor, hogy a híd elérhető-e.
+
+## Lenyomat (AOP 1.3, `projector`)
+
+A híd (`tools/projector.py`) letölti és lecsupaszítja az oldalt, a netbook (`user/projector.c`) csak ezt a
+lapos JSON-t kapja és rendezi el. A séma szándékosan lapos: egy ~200 soros részhalmaz-elemző (`user/json.c`) elég hozzá.
+
+```json
+{"v":1,"q":"https://…","title":"…",
+ "sources":[{"id":1,"url":"…","title":"…"}],
+ "nodes":[{"t":"title","w":9,"s":1,"x":"…"},
+          {"t":"head","w":7,"s":1,"x":"…"},
+          {"t":"para","w":5,"s":1,"x":"…"},
+          {"t":"link","w":2,"s":1,"x":"szöveg","to":"https://…"}]}
+```
+
+`t` (típus): `title`, `head` (w 8 = h1 … 5 = h4+), `para`, `item` (listaelem), `quote`, `code`, `link` (`to` a cél),
+`row` (táblázatsor, cellák `|`-lel), `note` (meta-leírás), `fact` (AI-tól, 4.3). `w` súly 0–9 (3 alatt halvány),
+`s` a forrás azonosítója. A csomópontokon belül nincs beágyazás. Kérdésnél (nem URL) a híd a DuckDuckGo
+HTML-találati oldalát projektálja: a találatok `link` (w 6) + `para` (kivonat) párok.
 
 ## Eszközök (TOOL_CALL nevek)
 

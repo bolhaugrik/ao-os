@@ -1,0 +1,11 @@
+# projector: weboldal vagy kereses szemantikus lenyomata a hidon at, teljes kepernyon
+agent projector
+console
+sysinfo
+net       *:9010
+fs.read   /etc/ai/**
+fs.read   /state/ai/**
+fs.read   /state/projector/**
+fs.write  /state/projector/**
+mem       8M
+deadline  1800s

@@ -11,6 +11,7 @@ import aocrypto  # noqa: E402
 MAGIC = b"AOP1"
 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
 FILE, CLIP_GET, CLIP = 12, 13, 14      # AOP 1.2: fajl a PC-re (shot/clip), PC-vagolap lekerese/valasza
+PROJECT, IMPRINT = 15, 16              # AOP 1.3: projector keres (q=, depth=) es a lenyomat (JSON)
 
 
 def parse_file(payload):

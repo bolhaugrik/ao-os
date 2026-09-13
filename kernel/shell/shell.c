@@ -79,6 +79,7 @@ static const struct cmd cmds[] = {
     { "caps audit",      "[PID]",                "capability-k; elutasitott hozzaferesek naploja", 2 },
     { "ai",              "KERDES",               "egyszeri kerdes az AI-nak (chat agent)", 3 },
     { "agent",           "NEV FELADAT",          "agent a NEV.cap manifesttel (/state/agents, /etc/agents)", 3 },
+    { "projector",       "CIM | KERDES",         "weboldal vagy kereses lenyomata a teljes kepernyon (--dump: szoveg)", 3 },
     { "shot",            "[NEV]",                "a kepernyo szovege a PC-re (a hid shots/ mappajaba)", 3 },
     { "copy",            "[N]",                  "az utolso parancs kimenete (vagy N sor) a PC vagolapjara", 3 },
     { "paste",           "[FAJL]",               "a PC vagolapja a parancssorba vagy fajlba", 3 },
@@ -931,7 +932,7 @@ static void cmd_spawn(int argc, char **argv)
 }
 
 /* ai SZOVEG  -> chat-agent;  agent NEV SZOVEG -> /state/agents/NEV.cap vagy /etc/agents/NEV.cap */
-static void cmd_agent(const char *name, int argc, char **argv, int first)
+static void cmd_agent(const char *name, const char *prog, int argc, char **argv, int first)
 {
     if (first >= argc) { kprintf("hasznalat: ai KERDES  |  agent NEV FELADAT\n"); return; }
     char mpath[VFS_PATH_MAX];
@@ -951,7 +952,7 @@ static void cmd_agent(const char *name, int argc, char **argv, int first)
     for (int i = 0; net_busy && i < 750; i++) task_sleep_ms(20);   /* boot-kori DHCP/PING: max 15 s */
     char *args[ARGV_MAX + 1];
     int n = 0;
-    args[n++] = "agentd";
+    args[n++] = (char *)prog;
     for (int i = first; i < argc && n < ARGV_MAX; i++) args[n++] = argv[i];
     run_with_caps(&cs, n, args);
 }
@@ -961,7 +962,7 @@ static void cmd_agent(const char *name, int argc, char **argv, int first)
 static void run_clip_agent(int argc, char **argv)
 {
     quiet_run = true;
-    cmd_agent("clip", argc, argv, 1);
+    cmd_agent("clip", "agentd", argc, argv, 1);
     quiet_run = false;
 }
 
@@ -1158,8 +1159,12 @@ static void execute(char *line)
     else if (!strcmp(c, "pwd")) kprintf("%s\n", cwd());
     else if (!strcmp(c, "run")) { if (argc > 1) cmd_run(argc, argv); else kprintf("run: programnev kell\n"); }
     else if (!strcmp(c, "spawn")) cmd_spawn(argc, argv);
-    else if (!strcmp(c, "ai")) cmd_agent("chat", argc, argv, 1);
-    else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
+    else if (!strcmp(c, "ai")) cmd_agent("chat", "agentd", argc, argv, 1);
+    else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], "agentd", argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
+    else if (!strcmp(c, "projector")) {
+        if (argc > 1) { quiet_run = true; cmd_agent("projector", "projector", argc, argv, 1); quiet_run = false; }
+        else kprintf("projector CIM | KERDES  (--dump: szovegkent, teljes kepernyo helyett)\n");
+    }
     else if (!strcmp(c, "ps")) cmd_ps();
     else if (!strcmp(c, "kill")) {
         u32 pid = 0;
