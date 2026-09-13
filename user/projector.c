@@ -9,6 +9,9 @@
  * / kereses, n kovetkezo talalat, s mentes (/state/projector/), q vagy Esc kilepes. */
 #include "aop.h"
 #include "json.h"
+#include "gfx.h"
+#include "inflate.h"
+#include "malloc.h"
 #include "../kernel/lib/string.h"
 #include "../kernel/lib/fmt.h"
 
@@ -49,6 +52,8 @@ static char search[96];
 static bool searching;
 static char hist[HIST_MAX][512];
 static int nhist;
+static char cur_url[512];                           /* az aktualis oldal (mindket nezet) */
+static bool view_valid, text_stale;                 /* a hu kep / a lenyomat a cur_url-hoz tartozik-e */
 
 /* ---------------------------------------------------------------- segedek */
 static u32 intern(const char *s, usize n)
@@ -370,7 +375,7 @@ static void draw(void)
         rb_text(" ", 1, W);
         rb_text(message, strlen(message), W);
     } else {
-        static const char help[] = " nyilak: mozgas  Tab: oszlop  Enter: link/vazlat  Bksp: vissza  PgUp/PgDn  /: kereses  n: kovetkezo  s: mentes  q: kilep";
+        static const char help[] = " nyilak  Tab: oszlop  Enter: link/vazlat  Bksp: vissza  PgUp/PgDn  /: kereses  n: kovetkezo  s: mentes  v: hu kep  q: kilep";
         rb_color(90, 40);
         rb_text(help, sizeof help - 1, W);
     }
@@ -479,11 +484,224 @@ static bool open_query(const char *q)
 {
     ao_printf("projector: %s betoltese...\n", q);
     if (!load(q)) return false;
+    strlcpy(cur_url, q, sizeof cur_url);
+    view_valid = false;
+    text_stale = false;
     cfocus = lfocus = ofocus = scroll_line = oscroll = lscroll = 0;
     col_focus = 1;
     layout();
     full_redraw = true;
     return true;
+}
+
+/* ---------------------------------------------------------------- hu kep nezet (RENDER a hidon) */
+/* A PC bongeszomotorja rendereli az oldalt, a netbook a kepet mutatja az fb-n; a linkek helye
+ * jon a keppel, igy Tab-bal lehet linkrol linkre lepni, Enter megnyitja. 'v' valt a ket nezet kozt. */
+struct vlink { u32 x, y, w, h; u32 url; };
+#define MAX_VLINKS 400
+#define BAR 20
+static struct vlink vlinks[MAX_VLINKS];
+static int nvlinks, vfocus = -1;
+static char varena[48000];
+static usize vapos = 1;
+static u8 *img;
+static u32 img_w, img_h, img_y, page_h, img_sum;
+static char vtitle[200], vurl[512];
+static struct gfx gx;
+static bool gx_open, view_mode, sum_ok;
+static u32 vscroll;
+
+static u32 num(const char **pp)
+{
+    const char *p = *pp;
+    u32 v = 0;
+    while (*p == ' ') p++;
+    while (*p >= '0' && *p <= '9') v = v * 10 + (u32)(*p++ - '0');
+    *pp = p;
+    return v;
+}
+
+static u32 vintern(const char *s, usize n)
+{
+    if (vapos + n + 1 > sizeof varena) return 0;
+    memcpy(varena + vapos, s, n);
+    varena[vapos + n] = 0;
+    u32 o = (u32)vapos;
+    vapos += n + 1;
+    return o;
+}
+
+static bool parse_meta(const char *m, usize len, u32 *zlen)
+{
+    nvlinks = 0; vapos = 1; varena[0] = 0; *zlen = 0; img_sum = 0; vtitle[0] = 0; vurl[0] = 0;
+    img_w = img_h = page_h = 0;
+    int links = -1;
+    usize i = 0;
+    while (i < len) {
+        usize s = i;
+        while (i < len && m[i] != '\n') i++;
+        usize l = i - s;
+        const char *line = m + s;
+        i++;
+        if (links < 0) {
+            const char *p;
+            if (l > 2 && !memcmp(line, "w=", 2)) { p = line + 2; img_w = num(&p); }
+            else if (l > 2 && !memcmp(line, "h=", 2)) { p = line + 2; img_h = num(&p); }
+            else if (l > 2 && !memcmp(line, "y=", 2)) { p = line + 2; img_y = num(&p); }
+            else if (l > 7 && !memcmp(line, "page_h=", 7)) { p = line + 7; page_h = num(&p); }
+            else if (l > 5 && !memcmp(line, "zlen=", 5)) { p = line + 5; *zlen = num(&p); }
+            else if (l > 4 && !memcmp(line, "sum=", 4)) { p = line + 4; img_sum = num(&p); }
+            else if (l > 6 && !memcmp(line, "title=", 6)) { usize n = l - 6 < sizeof vtitle - 1 ? l - 6 : sizeof vtitle - 1; memcpy(vtitle, line + 6, n); vtitle[n] = 0; }
+            else if (l > 4 && !memcmp(line, "url=", 4)) { usize n = l - 4 < sizeof vurl - 1 ? l - 4 : sizeof vurl - 1; memcpy(vurl, line + 4, n); vurl[n] = 0; }
+            else if (l > 6 && !memcmp(line, "links=", 6)) { p = line + 6; links = (int)num(&p); }
+        } else if (nvlinks < MAX_VLINKS) {
+            const char *p = line;
+            struct vlink v;
+            v.x = num(&p); v.y = num(&p); v.w = num(&p); v.h = num(&p);
+            while (*p == ' ') p++;
+            usize ul = (usize)(line + l - p);
+            v.url = vintern(p, ul);
+            if (v.w && v.h && v.url) vlinks[nvlinks++] = v;
+        }
+    }
+    return img_w > 0 && img_h > 0 && *zlen > 0 && (u64)img_w * img_h * 3 < 64ULL * 1024 * 1024;
+}
+
+static bool view_load(const char *url, u32 y)
+{
+    if (!gx_open) {
+        int e = gfx_open(&gx);
+        if (e) { snformat(message, sizeof message, "fb: %s", ao_errstr(e)); return false; }
+        gx_open = true;
+    }
+    char req[640];
+    usize n = (usize)snformat(req, sizeof req, "url=%s\nw=%u\nh=%u\ny=%u\n", url, gx.w, gx.h * 3, y);
+    int e = aop_send(AOP_RENDER, req, n);
+    if (e) { snformat(message, sizeof message, "kuldes: %s", ao_errstr(e)); return false; }
+    u8 *zbuf = NULL;
+    u32 zlen = 0, zgot = 0;
+    bool meta_ok = false;
+    for (;;) {
+        u16 type;
+        usize len;
+        e = aop_recv(&type, &len);
+        if (e) { snformat(message, sizeof message, "kapcsolat: %s", ao_errstr(e)); free(zbuf); return false; }
+        if (type == AOP_RENDERED) {
+            meta_ok = parse_meta((const char *)aop_payload, len, &zlen);
+            if (meta_ok) zbuf = malloc(zlen);
+            if (!zbuf) meta_ok = false;
+        } else if (type == AOP_FILE) {
+            usize p = 0, nls = 0;
+            while (p < len && nls < 2) { if (aop_payload[p] == '\n') nls++; p++; }
+            if (zbuf && nls == 2) {
+                usize c = len - p;
+                if (zgot + c > zlen) c = zlen - zgot;
+                memcpy(zbuf + zgot, aop_payload + p, c);
+                zgot += (u32)c;
+            }
+        } else if (type == AOP_END) {
+            break;
+        } else if (type == AOP_ERR) {
+            snformat(message, sizeof message, "hid: %s", (char *)aop_payload);
+            free(zbuf);
+            return false;
+        }
+    }
+    if (!meta_ok || zgot != zlen) { snformat(message, sizeof message, "hianyos kep (%u/%u bajt)", zgot, zlen); free(zbuf); return false; }
+    usize need = (usize)img_w * img_h * 3;
+    free(img);
+    img = malloc(need);
+    if (!img) { snformat(message, sizeof message, "nincs memoria a kephez (%lu KiB)", (u64)need / 1024); free(zbuf); return false; }
+    isize got = inflate_zlib(zbuf, zlen, img, need);
+    free(zbuf);
+    if (got != (isize)need) { snformat(message, sizeof message, "kicsomagolas: %ld (vart %lu)", (i64)got, (u64)need); free(img); img = NULL; return false; }
+    u32 s = 0;
+    for (usize k = 0; k < need; k++) s += img[k];
+    sum_ok = !img_sum || s == img_sum;
+    if (!sum_ok) snformat(message, sizeof message, "ellenorzo osszeg hiba");
+    vscroll = 0;
+    vfocus = -1;
+    view_valid = true;
+    strlcpy(cur_url, vurl[0] ? vurl : url, sizeof cur_url);
+    return true;
+}
+
+static void view_draw(void)
+{
+    u32 W = gx.w, H = gx.h, area = H - 2 * BAR;
+    u32 bg = gfx_rgb(&gx, 20, 40, 90), fg = gfx_rgb(&gx, 255, 255, 255), dim = gfx_rgb(&gx, 170, 190, 220);
+    u32 black = gfx_rgb(&gx, 0, 0, 0), amber = gfx_rgb(&gx, 255, 190, 40);
+    gfx_fill(&gx, 0, 0, W, BAR, bg);
+    gfx_text(&gx, 6, 2, 1, fg, bg, vtitle[0] ? vtitle : cur_url);
+    char pos[64];
+    snformat(pos, sizeof pos, "%u / %u", img_y + vscroll, page_h);
+    u32 pw = gfx_text_width(pos, 1);
+    gfx_text(&gx, W > pw + 8 ? W - pw - 8 : 0, 2, 1, dim, bg, pos);
+    u32 rows = area;
+    if (img && vscroll < img_h) {
+        if (vscroll + rows > img_h) rows = img_h - vscroll;
+        gfx_blit_rgb(&gx, 0, BAR, img, img_w * 3, 0, vscroll, img_w < W ? img_w : W, rows);
+    } else {
+        rows = 0;
+    }
+    if (rows < area) gfx_fill(&gx, 0, BAR + rows, W, area - rows, black);
+    const char *lurl = "";
+    if (vfocus >= 0 && vfocus < nvlinks) {
+        struct vlink *l = &vlinks[vfocus];
+        i64 sy = (i64)l->y - (i64)img_y - (i64)vscroll + BAR;
+        i64 ey = sy + l->h;
+        if (ey > BAR && sy < (i64)(BAR + area)) {
+            if (sy < BAR) sy = BAR;
+            if (ey > (i64)(BAR + area)) ey = BAR + area;
+            gfx_frame(&gx, l->x, (u32)sy, l->w, (u32)(ey - sy), 2, amber);
+        }
+        lurl = varena + l->url;
+    }
+    gfx_fill(&gx, 0, H - BAR, W, BAR, bg);
+    char bar[600];
+    snformat(bar, sizeof bar, " v: lenyomat  nyilak/PgUp/PgDn  Tab: link  Enter: megnyit  Bksp: vissza  q: kilep   %s", lurl);
+    gfx_text(&gx, 0, H - BAR + 2, 1, dim, bg, bar);
+}
+
+/* gorgetes a betoltott kepen belul; ha kilog, uj darab a hidrol */
+static void view_scroll_to(i64 target)
+{
+    u32 area = gx.h - 2 * BAR;
+    if (target < 0) target = 0;
+    if (target >= (i64)img_y && target + area <= (i64)(img_y + img_h)) { vscroll = (u32)(target - img_y); return; }
+    if (target + area > (i64)page_h) target = (i64)page_h - area;
+    if (target < 0) target = 0;
+    if (target >= (i64)img_y && target + area <= (i64)(img_y + img_h)) { vscroll = (u32)(target - img_y); return; }
+    u32 ny = target > (i64)area ? (u32)(target - area) : 0;    /* egy kepernyonyi elozmeny is jojjon */
+    if (view_load(cur_url, ny)) vscroll = (u32)(target - (i64)img_y);
+    if (vscroll + area > img_h) vscroll = img_h > area ? img_h - area : 0;
+}
+
+static void view_enter(void)
+{
+    view_mode = true;
+    if (!view_valid || strcmp(vurl, cur_url) != 0) view_load(cur_url, 0);
+    if (gx_open) view_draw();
+}
+
+static void view_leave(void)
+{
+    view_mode = false;
+    if (gx_open) { gfx_close(&gx); gx_open = false; }
+    full_redraw = true;
+    if (text_stale) {
+        if (load(cur_url)) { cfocus = lfocus = ofocus = scroll_line = oscroll = lscroll = 0; col_focus = 1; layout(); }
+        text_stale = false;
+    }
+}
+
+static void view_open_url(const char *next)
+{
+    if (nhist == HIST_MAX) { memmove(hist[0], hist[1], sizeof hist - sizeof hist[0]); nhist--; }
+    strlcpy(hist[nhist++], next, sizeof hist[0]);
+    strlcpy(cur_url, next, sizeof cur_url);
+    text_stale = true;
+    view_load(cur_url, 0);
 }
 
 static void dump(void)
@@ -498,10 +716,15 @@ static void dump(void)
 
 int main(int argc, char **argv)
 {
-    bool do_dump = false;
+    bool do_dump = false, start_view = false;
     int first = 1;
-    if (argc > 1 && strcmp(argv[1], "--dump") == 0) { do_dump = true; first = 2; }
-    if (argc <= first) { ao_puts("projector [--dump] CIM | KERDES\n"); return 1; }
+    while (first < argc && argv[first][0] == '-') {
+        if (strcmp(argv[first], "--dump") == 0) do_dump = true;
+        else if (strcmp(argv[first], "--view") == 0) start_view = true;
+        else break;
+        first++;
+    }
+    if (argc <= first) { ao_puts("projector [--dump] [--view] CIM | KERDES\n"); return 1; }
     char q[512];
     usize ql = 0;
     for (int i = first; i < argc && ql + strlen(argv[i]) + 2 < sizeof q; i++) {
@@ -519,14 +742,56 @@ int main(int argc, char **argv)
     int e = aop_connect("projector", true);
     if (e) return e;
     if (!open_query(q)) { aop_close(); return 5; }
-    if (do_dump) { dump(); aop_close(); return 0; }
+    if (do_dump) {
+        dump();
+        if (start_view) {
+            bool ok = view_load(cur_url, 0);
+            if (gx_open) { gfx_close(&gx); gx_open = false; }
+            if (ok) ao_printf("kep: %ux%u (y=%u, oldal %u), %d link, ellenorzo osszeg %s\n", img_w, img_h, img_y, page_h, nvlinks, sum_ok ? "ok" : "HIBA");
+            else ao_printf("kep: hiba: %s\n", message);
+        }
+        aop_close();
+        return 0;
+    }
     strlcpy(hist[nhist++], q, sizeof hist[0]);
+    if (start_view) view_enter();
 
     for (;;) {
+        if (view_mode) {
+            if (!gx_open) { view_mode = false; full_redraw = true; continue; }
+            u32 area = gx.h - 2 * BAR;
+            int k = read_key();
+            if (k < 0) break;
+            if (k == 'q' || k == K_ESC) break;
+            else if (k == 'v') { view_leave(); continue; }
+            else if (k == K_DOWN) view_scroll_to((i64)img_y + vscroll + 60);
+            else if (k == K_UP) view_scroll_to((i64)img_y + vscroll - 60);
+            else if (k == K_PGDN) view_scroll_to((i64)img_y + vscroll + area);
+            else if (k == K_PGUP) view_scroll_to((i64)img_y + vscroll - area);
+            else if (k == K_HOME) view_scroll_to(0);
+            else if (k == K_END) view_scroll_to((i64)page_h - area);
+            else if (k == '\t' && nvlinks) {
+                vfocus = (vfocus + 1) % nvlinks;
+                struct vlink *l = &vlinks[vfocus];
+                i64 top = (i64)img_y + vscroll;
+                if ((i64)l->y < top || (i64)l->y + l->h > top + area) view_scroll_to((i64)l->y - (i64)area / 3);
+            } else if (k == '\n' && vfocus >= 0 && vfocus < nvlinks) {
+                char next[512];
+                strlcpy(next, varena + vlinks[vfocus].url, sizeof next);
+                view_open_url(next);
+            } else if (k == '\b' || k == K_LEFT) {
+                if (nhist > 1) { nhist--; strlcpy(cur_url, hist[nhist - 1], sizeof cur_url); text_stale = true; view_load(cur_url, 0); }
+            } else if (k == 'r') {
+                view_load(cur_url, img_y);
+            }
+            if (gx_open) view_draw();
+            continue;
+        }
         draw();
         message[0] = 0;
         int k = read_key();
         if (k < 0) break;
+        if (k == 'v') { view_enter(); continue; }
         if (searching) {
             if (k == '\n') { searching = false; find_next(); }
             else if (k == K_ESC) { searching = false; }
@@ -572,6 +837,7 @@ int main(int argc, char **argv)
         else if (k == 'n') { find_next(); }
         else if (k == 's') { save(); }
     }
+    if (gx_open) { gfx_close(&gx); gx_open = false; }
     ao_puts("\x1b[2J\x1b[H");
     ao_printf("projector: %s (%d csomopont, %d link, %d forras)\n", title, nnodes, nlinks, nsrcs);
     aop_close();

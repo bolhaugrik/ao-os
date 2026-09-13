@@ -31,6 +31,7 @@ enum {
     SYS_CON_MODE,     /* (CON_* jelzok) -> a konzol-bemenet modja (nyers billentyu-esemenyek) */
     SYS_FB_MAP,       /* (struct fbinfo*) -> a framebuffer a cimterbe (fb capability); a konzol szunetel */
     SYS_SBRK,         /* (delta) -> a heap regi vege; delta > 0: uj, nullazott lapok a bss utan (mem-korlat) */
+    SYS_FB_RELEASE,   /* () -> a konzol visszarajzol; a program ezutan ne irja a framebuffert (ujra SYS_FB_MAP) */
     SYS_MAX
 };
 

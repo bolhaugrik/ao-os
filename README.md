@@ -82,6 +82,10 @@ A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`
 és a teljes képernyőn rendezi el: vázlat, tartalom, linkek; nyilak, Tab, Enter, Backspace, `/`, `s`, `q`.
 `projector --dump …` szövegként írja ki. PC-n külön is próbálható: `python tools\projector.py <cím | kérdés>`.
 
+**Hű nézet:** a projectorban `v` (vagy `projector --view …`) a PC böngészőmotorjával renderelt képet mutatja
+teljes képernyőn, linkről linkre Tab-bal, Enter megnyit. A PC-n ehhez `pip install playwright pillow` és
+`python -m playwright install chromium` kell; a netbookon semmi.
+
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
 

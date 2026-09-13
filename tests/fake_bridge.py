@@ -12,7 +12,8 @@ import threading
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, parse_file, parse_kv,  # noqa: E402
                  HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, ERR, PING, PONG, FILE, CLIP_GET, CLIP,
-                 PROJECT, IMPRINT, FETCH)
+                 PROJECT, IMPRINT, FETCH, RENDER, RENDERED)
+import zlib  # noqa: E402
 import projector  # noqa: E402
 
 BUILD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build")
@@ -125,6 +126,35 @@ def handle(sock, addr, psk):
                     conn.send(END, f"stop=fetch\nsize={len(data)}\n")
                 else:
                     conn.send(ERR, f"fetch: nincs ilyen fajl a share/ mappaban: {name}")
+            elif ftype == RENDER:
+                # szintetikus "oldalkep": vizszintes szinatmenet, harom link-teglalappal; ellenorzo osszeggel
+                kv = parse_kv(payload)
+                w, h, y = int(kv.get("w", "1280")), int(kv.get("h", "2160")), int(kv.get("y", "0"))
+                page_h = 3000
+                h = max(200, min(h, page_h - y))
+                rows = []
+                for j in range(h):
+                    py = y + j
+                    g = (py * 255 // page_h) & 255
+                    rows.append(bytes((g, 90, 255 - g)) * w)
+                rgb = bytearray(b"".join(rows))
+                links = [(100, 120, 300, 40, "http://teszt.local/masodik-lap"), (100, 800, 300, 40, "http://teszt.local/harmadik"),
+                         (100, 2500, 300, 40, "http://teszt.local/negyedik")]
+                for lx, ly, lw, lh, _ in links:
+                    for j in range(lh):
+                        py = ly + j
+                        if y <= py < y + h:
+                            off = ((py - y) * w + lx) * 3
+                            rgb[off:off + lw * 3] = bytes((255, 255, 255)) * lw
+                z = zlib.compress(bytes(rgb), 1)
+                meta = [f"w={w}", f"h={h}", f"y={y}", f"page_h={page_h}", f"zlen={len(z)}", f"sum={sum(rgb) & 0xFFFFFFFF}",
+                        "title=Teszt lap kepe", f"url={kv.get('url', '')}", f"links={len(links)}"]
+                meta += [f"{lx} {ly} {lw} {lh} {u}" for lx, ly, lw, lh, u in links]
+                print(f"render: {kv.get('url')!r} {w}x{h} y={y} -> {len(z)} bajt", flush=True)
+                conn.send(RENDERED, "\n".join(meta) + "\n")
+                for off in range(0, len(z), 60000):
+                    conn.send(FILE, b"img\npage\n" + z[off:off + 60000])
+                conn.send(END, "stop=render\n")
             elif ftype == PROJECT:
                 q = parse_kv(payload).get("q", "")
                 print(f"projector: {q!r}", flush=True)

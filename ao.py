@@ -84,6 +84,7 @@ KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm", "kernel/task/sched
 # AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
 USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector", "game2048", "keytest", "fbtest", "fputest", "malloctest", "doom"]
 USER_LIB = ["user/aolib.c", "user/crypto.c", "user/aop.c", "user/json.c", "user/malloc.c",
+            "user/inflate.c", "user/gfx.c", "kernel/drv/font_data.c",
             "kernel/lib/fmt.c", "kernel/lib/string.c"]
 USER_CFLAGS = [
     "--target=x86_64-elf",

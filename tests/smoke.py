@@ -146,6 +146,7 @@ SESSIONS = [
         ("\r", "vagolap-ok"),                 # a parancssorba toltott sor futtatasa (Enter)
         ("projector --dump http://teszt.local/lap", "[item 4] Masodik elem"),
         ("projector --dump hiba", "[hid hiba: projector-teszt-hiba]"),
+        ("projector --dump --view http://teszt.local/lap", "3 link, ellenorzo osszeg ok"),   # RENDER + inflate + fb
         ("projector http://teszt.local/lap", "PROJECTOR"),
         ("\x1b[B\x1b[Bs", "mentve: /state/projector/teszt-lap-cime.json"),
         ("q", "projector: Teszt lap cime ("),

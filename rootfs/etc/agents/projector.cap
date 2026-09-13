@@ -2,10 +2,11 @@
 agent projector
 console
 sysinfo
+fb
 net       *:9010
 fs.read   /etc/ai/**
 fs.read   /state/ai/**
 fs.read   /state/projector/**
 fs.write  /state/projector/**
-mem       8M
+mem       96M
 deadline  1800s

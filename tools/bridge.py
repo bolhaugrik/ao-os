@@ -51,7 +51,7 @@ TOOL_DEFS = [
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, load_psk, default_psk_path,  # noqa: E402
                  parse_file, parse_kv, HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR,
-                 PING, PONG, FILE, CLIP_GET, CLIP, PROJECT, IMPRINT, FETCH)
+                 PING, PONG, FILE, CLIP_GET, CLIP, PROJECT, IMPRINT, FETCH, RENDER, RENDERED)
 import projector  # noqa: E402
 import aocrypto  # noqa: E402
 
@@ -431,6 +431,22 @@ class Session:
                         self.conn.send(END, f"stop=fetch\nsize={size}\n")
                     except Exception as e:  # nincs ilyen fajl, rossz nev
                         self.conn.send(ERR, f"fetch: {e}"[:300])
+                elif ftype == RENDER:
+                    kv = parse_kv(payload)
+                    url = kv.get("url", "")
+                    try:
+                        w, h, y = int(kv.get("w", "1366")), int(kv.get("h", "2304")), int(kv.get("y", "0"))
+                        self.log(f"render: {url!r} {w}x{h} y={y}")
+                        import render as render_mod
+                        r = render_mod.render(url, w, h, y)
+                        meta, z = render_mod.pack(r)
+                        self.conn.send(RENDERED, meta)
+                        for off in range(0, len(z), FETCH_CHUNK):
+                            self.conn.send(FILE, b"img\npage\n" + z[off:off + FETCH_CHUNK])
+                        self.conn.send(END, "stop=render\n")
+                        self.log(f"render kesz: {r['w']}x{r['h']}, {len(r['links'])} link, {len(z)} bajt")
+                    except Exception as e:
+                        self.conn.send(ERR, f"render: {type(e).__name__}: {e}"[:300])
                 elif ftype == CLIP_GET:
                     try:
                         text = clipboard_get()

@@ -34,7 +34,8 @@ struct task {
     enum task_state state;
     char name[32];
     u32 con_mode;               /* CON_* (nyers billentyu-esemenyek); kilepeskor visszaall */
-    bool fb_mapped;             /* a framebuffer a cimterben van (fb capability); kilepeskor a konzol visszajon */
+    bool fb_mapped;             /* a program birtokolja a kepernyot (fb capability); kilepeskor a konzol visszajon */
+    bool fb_pages_mapped;       /* a framebuffer lapjai mar a cimterben vannak (SYS_FB_RELEASE utan is) */
     u8 fx[512] ALIGNED(16);     /* FPU/SSE allapot (fxsave), taskvaltaskor mentve/visszatoltve */
     bool user;
     bool killed;

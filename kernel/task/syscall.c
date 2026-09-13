@@ -330,9 +330,12 @@ static int sys_fb_map(struct task *t, u64 uptr_)
     u64 pa = (u64)(uptr)fb.base - DIRECT_MAP_BASE;
     u64 size = (u64)fb.pitch * fb.height;
     if (!t->fb_mapped) {
-        for (u64 off = 0; off < size; off += PAGE_SIZE)
-            if (!vmm_map(t->pml4, FB_USER_VA + off, pa + off, PTE_W | PTE_U | PTE_PWT | PTE_NX))
-                return E_NOMEM;
+        if (!t->fb_pages_mapped) {
+            for (u64 off = 0; off < size; off += PAGE_SIZE)
+                if (!vmm_map(t->pml4, FB_USER_VA + off, pa + off, PTE_W | PTE_U | PTE_PWT | PTE_NX))
+                    return E_NOMEM;
+            t->fb_pages_mapped = true;
+        }
         t->fb_mapped = true;
         console_suspend(true);
     }
@@ -439,6 +442,10 @@ void syscall_dispatch(struct regs *r)
     case SYS_NET_INFO: ret = sys_net_info(t, a); break;
     case SYS_FB_MAP: ret = sys_fb_map(t, a); break;
     case SYS_SBRK: { u64 r = task_sbrk(t, (i64)a); ret = r ? (i64)r : E_NOMEM; break; }
+    case SYS_FB_RELEASE:
+        if (t->fb_mapped) { t->fb_mapped = false; console_suspend(false); }
+        ret = 0;
+        break;
     case SYS_CON_MODE:
         if (!cap_check(t, CAP_CONSOLE, NULL)) { ret = E_CAP; break; }
         t->con_mode = (u32)a & (CON_RAW | CON_NONBLOCK);
