@@ -1,0 +1,8 @@
+# Doom: kepernyo, nyers billentyuzet, a /state/games alatti WAD es mentesek; halozat nincs
+agent doom
+console
+sysinfo
+fb
+fs.read   /state/games/**
+fs.write  /state/games/**
+mem       96M

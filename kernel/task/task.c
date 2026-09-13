@@ -27,7 +27,25 @@ static struct waitq sleep_q;
 static u32 next_pid = 1;
 u64 current_kstack_top;
 
-extern void switch_to(u64 *old_rsp, u64 new_rsp);
+extern void switch_to(u64 *old_rsp, u64 new_rsp, void *old_fx, void *new_fx);
+static u8 fx_init[512] ALIGNED(16);     /* fninit + alap MXCSR utani fxsave: sablon az uj taskoknak */
+
+/* FPU/SSE engedelyezese: a kernel maga nem hasznalja (-mno-sse), a programok igen; az allapotot
+ * minden taskvaltasnal fxsave/fxrstor menti (nincs lusta valtas, egyszerubb es biztonsagos) */
+static void fpu_init(void)
+{
+    u64 cr0, cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1ULL << 9) | (1ULL << 10);          /* OSFXSR, OSXMMEXCPT */
+    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~((1ULL << 2) | (1ULL << 3));        /* EM, TS torolve */
+    cr0 |= (1ULL << 1) | (1ULL << 5);           /* MP, NE */
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0));
+    u32 mxcsr = 0x1F80;                         /* minden kivetel maszkolva */
+    __asm__ volatile("fninit; ldmxcsr %0" : : "m"(mxcsr));
+    __asm__ volatile("fxsave (%0)" : : "r"(fx_init) : "memory");
+}
 extern void task_trampoline(void);
 extern void syscall_entry(void);
 
@@ -61,6 +79,7 @@ static struct task *alloc_slot(const char *name)
         if (tasks[i].state == T_FREE) {
             struct task *t = &tasks[i];
             memset(t, 0, sizeof *t);
+    memcpy(t->fx, fx_init, sizeof fx_init);     /* tiszta FPU/SSE allapot az uj tasknak */
             t->id = next_pid++;
             strlcpy(t->name, name, sizeof t->name);
             t->kstack = kmalloc(KSTACK_SIZE);
@@ -111,6 +130,7 @@ static void kthread_wrapper(void (*fn)(void *), void *arg)
 void task_init(void)
 {
     memset(tasks, 0, sizeof tasks);
+    fpu_init();
     struct task *idle = &tasks[0];
     idle->id = 0;
     strcpy(idle->name, "idle");
@@ -159,11 +179,27 @@ static bool map_user_pages(struct task *t, u64 vaddr, usize size)
     return true;
 }
 
+/* sbrk: a heap novelese a bss utan; a regi veget adja, 0-t hibanal. Nem zsugorit. */
+u64 task_sbrk(struct task *t, i64 delta)
+{
+    if (!t->user) return 0;
+    u64 old = t->user_hi;
+    if (delta <= 0) return old;
+    u64 n = ((u64)delta + PAGE_SIZE - 1) & ~(u64)(PAGE_SIZE - 1);
+    if (n > 256 * MiB || t->user_hi - t->heap_lo + n > 1024 * MiB) return 0;    /* eszszeru plafon */
+    if (n / PAGE_SIZE + 64 > pmm_free_frames()) return 0;                     /* a kernelnek is maradjon */
+    if (t->user_hi + n > t->stack_lo - 16 * MiB) return 0;                    /* a verem ala nem erhet */
+    if (!map_user_pages(t, t->user_hi, n)) return 0;
+    t->user_hi += n;
+    return old;
+}
+
 static void free_task(struct task *t)
 {
     if (t->kstack)
         kfree(t->kstack);
     memset(t, 0, sizeof *t);
+    memcpy(t->fx, fx_init, sizeof fx_init);     /* tiszta FPU/SSE allapot az uj tasknak */
     t->state = T_FREE;
 }
 
@@ -189,6 +225,7 @@ struct task *task_create_user(const char *name, const void *image, usize image_s
     usize img_bytes = (h->load_size + h->bss_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     t->user_lo = USER_LOAD;
     t->user_hi = USER_LOAD + img_bytes;
+    t->heap_lo = t->user_hi;
     if (!map_user_pages(t, USER_LOAD, img_bytes)) goto nomem;
     usize have = image_size < h->load_size ? image_size : h->load_size;
     for (usize off = 0; off < have; off += PAGE_SIZE) {
@@ -343,7 +380,7 @@ void schedule(void)
     gdt_set_kernel_stack(next->kstack_top);
     if (next->pml4 != prev->pml4)
         vmm_switch(next->pml4);
-    switch_to(&prev->rsp, next->rsp);
+    switch_to(&prev->rsp, next->rsp, prev->fx, next->fx);
 }
 
 void task_yield(void)

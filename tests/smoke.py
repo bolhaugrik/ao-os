@@ -38,6 +38,10 @@ SESSIONS = [
         ("ab\x1b[Aq", "esemeny"),                 # a, b, Fel, q (+ az Enter, ha egy olvasasba esik)
         ("echo szoveges-mod-vissza", "szoveges-mod-vissza"),
         ("run fbtest\n", "fbtest: ok"),
+        ("run fputest", "fputest: ok"),
+        ("run malloctest", "malloctest: ok"),
+        ("spawn /etc/agents/clip.cap malloctest 6", "korlat ok"),   # 4M korlat: a foglalo NULL-t kap, nem omlik ossze
+        ("run cryptotest", "cryptotest: minden OK"),
         ("spawn /etc/agents/clip.cap fbtest", "fbtest: fb: E_CAP"),
         ("echo konzol-vissza", "konzol-vissza"),
         ("write /tmp/t.txt proba szoveg", "bajt"),

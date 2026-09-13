@@ -23,6 +23,7 @@ section .text
 global _start
 _start:
     xor rbp, rbp
+    and rsp, -16            ; ABI: a call elott 16-ra igazitott verem (SSE-s kod is jo)
     call main
     mov edi, eax
     call ao_exit

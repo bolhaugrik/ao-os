@@ -81,14 +81,15 @@ KERNEL_C = [
 KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm", "kernel/task/sched.asm"]
 
 # AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
-USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector", "game2048", "keytest", "fbtest"]
-USER_LIB = ["user/aolib.c", "user/crypto.c", "user/aop.c", "user/json.c", "kernel/lib/fmt.c", "kernel/lib/string.c"]
+USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector", "game2048", "keytest", "fbtest", "fputest", "malloctest"]
+USER_LIB = ["user/aolib.c", "user/crypto.c", "user/aop.c", "user/json.c", "user/malloc.c",
+            "kernel/lib/fmt.c", "kernel/lib/string.c"]
 USER_CFLAGS = [
     "--target=x86_64-elf",
     "-ffreestanding", "-fno-builtin", "-nostdlib", "-nostdinc",
     "-fno-stack-protector", "-fno-pic", "-fno-pie", "-fvisibility=hidden",
     "-fno-asynchronous-unwind-tables", "-fno-unwind-tables",
-    "-mno-red-zone", "-mno-mmx", "-mno-sse", "-mno-sse2",
+    "-mno-red-zone",                    # SSE/FPU engedelyezve: a kernel taskvaltaskor menti (fxsave)
     "-O2", "-g", "-std=c11", "-Wall", "-Wextra", "-Werror",
     "-I", os.path.join(ROOT, "user"),
     "-I", os.path.join(ROOT, "kernel", "include"),

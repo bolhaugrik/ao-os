@@ -7,7 +7,8 @@ extern current_kstack_top
 
 section .text
 
-; void switch_to(u64 *old_rsp, u64 new_rsp)
+; void switch_to(u64 *old_rsp, u64 new_rsp, void *old_fx, void *new_fx)
+; az FPU/SSE allapot is itt cserel (fxsave/fxrstor, 16-ra igazitott 512 bajtos teruletek)
 global switch_to
 switch_to:
     push rbp
@@ -16,8 +17,10 @@ switch_to:
     push r13
     push r14
     push r15
+    fxsave [rdx]
     mov [rdi], rsp
     mov rsp, rsi
+    fxrstor [rcx]
     pop r15
     pop r14
     pop r13

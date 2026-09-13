@@ -35,13 +35,15 @@ struct task {
     char name[32];
     u32 con_mode;               /* CON_* (nyers billentyu-esemenyek); kilepeskor visszaall */
     bool fb_mapped;             /* a framebuffer a cimterben van (fb capability); kilepeskor a konzol visszajon */
+    u8 fx[512] ALIGNED(16);     /* FPU/SSE allapot (fxsave), taskvaltaskor mentve/visszatoltve */
     bool user;
     bool killed;
     u64 pml4;
     u8 *kstack;
     u64 kstack_top;
     u64 rsp;                    /* mentett kernel-verem a kontextusvaltashoz */
-    u64 user_lo, user_hi;       /* kep + bss */
+    u64 user_lo, user_hi;       /* kep + bss + heap (a heap a bss utan no, sbrk) */
+    u64 heap_lo;                /* a heap kezdete (= a bss vege, lapra igazitva); a vege user_hi */
     u64 stack_lo, stack_hi;
     struct task *parent;
     int exit_code;
@@ -68,6 +70,7 @@ struct task *task_create_user(const char *name, const void *image, usize image_s
                               int argc, char *const *argv, const struct capset *caps,
                               struct task *parent, int *err);
 NORETURN void task_exit(int code);
+u64  task_sbrk(struct task *t, i64 delta);     /* heap novelese; a regi veg, 0 = nincs memoria/korlat */
 int  task_wait(u32 pid, int *status);          /* blokkol; visszaadja a pid-et vagy hibat */
 bool task_kill(u32 pid);
 void task_yield(void);

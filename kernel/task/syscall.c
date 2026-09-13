@@ -438,6 +438,7 @@ void syscall_dispatch(struct regs *r)
     case SYS_NET_CONNECT: ret = sys_net_connect(t, a); break;
     case SYS_NET_INFO: ret = sys_net_info(t, a); break;
     case SYS_FB_MAP: ret = sys_fb_map(t, a); break;
+    case SYS_SBRK: { u64 r = task_sbrk(t, (i64)a); ret = r ? (i64)r : E_NOMEM; break; }
     case SYS_CON_MODE:
         if (!cap_check(t, CAP_CONSOLE, NULL)) { ret = E_CAP; break; }
         t->con_mode = (u32)a & (CON_RAW | CON_NONBLOCK);

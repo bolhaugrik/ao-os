@@ -42,6 +42,11 @@ int ao_net_connect(const char *addr) { return (int)ao_syscall(SYS_NET_CONNECT, (
 int ao_net_info(struct netinfo *ni) { return (int)ao_syscall(SYS_NET_INFO, (u64)(uptr)ni, 0, 0, 0); }
 int ao_con_mode(u32 mode) { return (int)ao_syscall(SYS_CON_MODE, mode, 0, 0, 0); }
 int ao_fb_map(struct fbinfo *fi) { return (int)ao_syscall(SYS_FB_MAP, (u64)(uptr)fi, 0, 0, 0); }
+void *ao_sbrk(isize delta)
+{
+    i64 r = ao_syscall(SYS_SBRK, (u64)delta, 0, 0, 0);
+    return r > 0 ? (void *)(uptr)r : NULL;
+}
 
 void ao_puts(const char *s) { ao_write(1, s, strlen(s)); }
 
