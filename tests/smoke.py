@@ -153,6 +153,8 @@ SESSIONS = [
         ("fetch nincs.txt", "nincs ilyen fajl a share/"),
         ("fetch oriasi.bin /state/games", "/state/games/oriasi.bin: 4400000 bajt"),   # AOFS2 ketszeres indirekt
         ("ls /state/games", "4400000 B"),
+        ("fetch doom.aox /state/games", "doom.aox: "),          # a share/ mappabol (a build teszi oda)
+        ("doom", "nincs WAD a /state/games alatt"),               # program van, WAD nincs: ertheto uzenet
         ("rm /state/games/oriasi.bin", "AO> "),
         ("sync", "sync: ok"),
         ("2048", "legjobb"),

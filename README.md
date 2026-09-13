@@ -75,6 +75,18 @@ A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`
 
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
+
+**Doom.** A PureDOOM motor (`user/doom/PureDOOM.h`, GPL) az AO-OS-hez kötve: saját `malloc`, `fb` capability,
+nyers billentyűzet, FPU-állapot a kernelben. A `doom.aox` és a shareware `doom1.wad` a PC `share/` mappájában van
+(a build oda teszi a programot, a WAD-ot a felhasználó teszi oda), a netbookon:
+
+```
+fetch doom.aox /state/games
+fetch doom1.wad /state/games
+doom
+```
+
+Nyilak, Ctrl tűz, Space használat, Shift futás, Alt oldalazás, Esc menü. Hang nincs.
 `time`, `date` és a `set` alparancsuk a CMOS órát kezeli; `status` az állapot-összefoglaló; Tab kiegészít.
 
 ## Elrendezés

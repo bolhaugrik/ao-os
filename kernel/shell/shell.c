@@ -1190,7 +1190,13 @@ static void execute(char *line)
     else if (!strcmp(c, "ai")) { if (argc > 1) cmd_agent("chat", "agentd", argc, argv, 1); else kprintf("hasznalat: ai KERDES\n"); }
     else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], "agentd", argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
     else if (!strcmp(c, "2048")) { quiet_run = true; cmd_agent("game", "game2048", argc, argv, 1); quiet_run = false; }
-    else if (!strcmp(c, "doom")) { quiet_run = true; cmd_agent("doom", "doom", argc, argv, 1); quiet_run = false; }
+    else if (!strcmp(c, "doom")) {
+        struct stat st;
+        if (vfs_stat("/state/games/doom.aox", &st) != 0)
+            kprintf("doom: nincs telepitve. PC-n a share/ mappaban van a doom.aox es a doom1.wad, netbookon:\n"
+                    "  fetch doom.aox /state/games\n  fetch doom1.wad /state/games\n");
+        else { quiet_run = true; cmd_agent("doom", "/state/games/doom.aox", argc, argv, 1); quiet_run = false; }
+    }
     else if (!strcmp(c, "projector")) {
         if (argc > 1) { quiet_run = true; cmd_agent("projector", "projector", argc, argv, 1); quiet_run = false; }
         else kprintf("projector CIM | KERDES  (--dump: szovegkent, teljes kepernyo helyett)\n");

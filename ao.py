@@ -81,7 +81,7 @@ KERNEL_C = [
 KERNEL_ASM = ["kernel/arch/entry.asm", "kernel/arch/isr.asm", "kernel/task/sched.asm"]
 
 # AOX programok: user/<nev>.c -> rootfs/bin/<nev>.aox
-USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector", "game2048", "keytest", "fbtest", "fputest", "malloctest"]
+USER_PROGS = ["hello", "captest", "spin", "agentd", "cryptotest", "fault", "projector", "game2048", "keytest", "fbtest", "fputest", "malloctest", "doom"]
 USER_LIB = ["user/aolib.c", "user/crypto.c", "user/aop.c", "user/json.c", "user/malloc.c",
             "kernel/lib/fmt.c", "kernel/lib/string.c"]
 USER_CFLAGS = [
@@ -161,11 +161,21 @@ def build():
         libobjs.append(obj)
     for prog in USER_PROGS:
         obj = b(f"user_{prog}.o")
-        run([t["clang"]] + USER_CFLAGS + ["-c", f"user/{prog}.c", "-o", obj])
+        flags = USER_CFLAGS
+        if prog == "doom":      # harmadik fel kodja (PureDOOM): a figyelmeztetesek nem hibak
+            flags = [f for f in USER_CFLAGS if f not in ("-Wall", "-Wextra", "-Werror")] + ["-w"]
+        run([t["clang"]] + flags + ["-c", f"user/{prog}.c", "-o", obj])
         elf = b(f"{prog}.aox.elf")
         run([t["ld.lld"], "-T", "user/aox.ld", "-nostdlib", "-static", "--no-pie", "-z", "max-page-size=0x10",
              "-o", elf, crt0, obj] + libobjs)
         run([t["llvm-objcopy"], "-O", "binary", elf, os.path.join(ROOT, "rootfs", "bin", f"{prog}.aox")])
+    # a nagy programok nem a ramdiskbe (1 MiB-os boot-terulet), hanem a share/ mappaba kerulnek:
+    # a netbookra 'fetch doom.aox /state/games' viszi at
+    os.makedirs(os.path.join(ROOT, "share"), exist_ok=True)
+    for big in ("doom",):
+        src = os.path.join(ROOT, "rootfs", "bin", f"{big}.aox")
+        if os.path.exists(src):
+            shutil.move(src, os.path.join(ROOT, "share", f"{big}.aox"))
 
     print("[ramdisk]")
     # a telepitohoz a bootloader es a kernel is a ramdiskbe kerul

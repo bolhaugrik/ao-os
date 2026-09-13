@@ -111,6 +111,13 @@ def handle(sock, addr, psk):
                 elif name == "szoveg.txt":
                     conn.send(FILE, b"data\nszoveg.txt\nfetch-teszt sor\n")
                     conn.send(END, "stop=fetch\nsize=16\n")
+                elif "/" not in name and "\\" not in name and os.path.isfile(os.path.join(BUILD, "..", "share", name)):
+                    # valodi fajl a share/ mappabol (pl. doom1.wad a QEMU-s probahoz)
+                    path = os.path.join(BUILD, "..", "share", name)
+                    data = open(path, "rb").read()
+                    for off in range(0, len(data), 60000):
+                        conn.send(FILE, b"data\n" + name.encode() + b"\n" + data[off:off + 60000])
+                    conn.send(END, f"stop=fetch\nsize={len(data)}\n")
                 else:
                     conn.send(ERR, f"fetch: nincs ilyen fajl a share/ mappaban: {name}")
             elif ftype == PROJECT:

@@ -59,6 +59,8 @@ def main():
     k_sect = sectors(len(kernel))
     r_lba = KERNEL_LBA + k_sect
     r_sect = sectors(len(ramdisk))
+    if r_lba + r_sect > PART_ALIGN - 1:
+        sys.exit(f"hiba: a boot-terulet megtelt (kernel + ramdisk = {r_lba + r_sect} szektor > {PART_ALIGN - 1}); nagy programok a share/ mappaba (ao.py)")
     end_lba = r_lba + r_sect
     part_lba = ((end_lba + PART_ALIGN - 1) // PART_ALIGN) * PART_ALIGN
     if part_lba == 0:
