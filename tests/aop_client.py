@@ -36,21 +36,21 @@ def recv_frame(sock):
 
 
 def parse_call(payload):
-    text = payload.decode("utf-8", errors="replace")
-    tid, name, rest = text.split("\n", 2)
+    """bajtokon dolgozik: a hossz-mezo bajtszam, nem karakterszam (ekezetek!)"""
+    tid, name, rest = payload.split(b"\n", 2)
     args = {}
     pos = 0
     while pos < len(rest):
-        nl = rest.find("\n", pos)
+        nl = rest.find(b"\n", pos)
         if nl < 0:
             break
-        key = rest[pos:nl]
-        nl2 = rest.find("\n", nl + 1)
+        key = rest[pos:nl].decode("utf-8", errors="replace")
+        nl2 = rest.find(b"\n", nl + 1)
         length = int(rest[nl + 1:nl2])
-        val = rest[nl2 + 1:nl2 + 1 + length]
+        val = rest[nl2 + 1:nl2 + 1 + length].decode("utf-8", errors="replace")
         args[key] = val
         pos = nl2 + 1 + length + 1
-    return tid, name, args
+    return tid.decode(), name.decode(), args
 
 
 def main():
