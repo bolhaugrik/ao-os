@@ -7,7 +7,14 @@ amelyben egy távoli AI-modell (Claude vagy Gemini) csak azt teheti a gépen, am
 
 *AO-OS is a from-scratch, minimal "AI terminal" OS for an Acer Aspire One netbook: own bootloader,
 own 64-bit kernel, own shell and TCP/IP, and a capability model for AI agents talking to a remote model
-through a small bridge. Documentation is in Hungarian.*
+through a small bridge. Documentation is in Hungarian. And yes, it runs Doom.*
+
+![Doom az AO-OS-en, a netbookon (F12-vel készült képernyőkép, a hídon át a PC-re küldve)](docs/img/doom-netbook.png)
+
+**Fut rajta a Doom.** A fenti kép a netbookról jött: az OS saját F12-es képernyőképe, a saját hídon át a PC-re
+küldve. A PureDOOM motor változtatás nélkül fordult le a freestanding toolchainnel, és tizenkét visszahívással
+kapcsolódik a rendszerhez: fájlok a saját fájlrendszerről, memória a saját foglalóból, kép az `fb` capability-n át,
+billentyűk a nyers konzolmódból, az FPU-állapotot a kernel menti taskváltáskor. Nincs libc, nincs POSIX, nincs Linux.
 
 ## Állapot
 
@@ -18,6 +25,8 @@ A Phase 0–3 terv teljesült, valódi hardveren:
 | boot → prompt a belső SSD-ről | ~210 ms |
 | `ai szia` a hídon át (Gemini 2.5 Flash, titkosított csatorna) | ~1,2 s |
 | `agent coder` fájlt ír a `/project/src` alá (Claude Sonnet 5 / Gemini) | 5,5 s / 2,1 s |
+| Doom (PureDOOM-port, 960×600, 35 Hz) a netbookon | fut |
+| `doom1.wad` (4,2 MB) átvitele a PC-ről a hídon át | 8,4 s |
 | bootloader + kernel + programok + híd + tesztek | ~12 300 sor C, asm, Python |
 
 Részletek, döntések és mérések: [docs/AO-OS-Architecture-v0.1.md](docs/AO-OS-Architecture-v0.1.md).
@@ -87,6 +96,13 @@ doom
 ```
 
 Nyilak, Ctrl tűz, Space használat, Shift futás, Alt oldalazás, Esc menü. Hang nincs.
+
+**Képernyőkép bárhol:** F12 (a Doomban is) a képernyő pixeleit a `/state/shots/N.ppm` fájlba menti; `shot /state/shots/1.ppm`
+a PC `shots/` mappájába küldi, ahol PNG lesz belőle. Szöveges módban a `shot` a konzol szövegét küldi.
+
+| projector | 2048 |
+|---|---|
+| ![projector](docs/img/projector-qemu.png) | ![2048](docs/img/2048-qemu.png) |
 `time`, `date` és a `set` alparancsuk a CMOS órát kezeli; `status` az állapot-összefoglaló; Tab kiegészít.
 
 ## Elrendezés
