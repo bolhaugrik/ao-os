@@ -604,9 +604,40 @@ A tesztelés közben talált két hiba és javításuk: (1) az AOX-képek 0-tól
 
 Korábbi állapot: QEMU-ban a teljes kör működik szimulált híddal. Elkészült: Ethernet/ARP/IPv4/ICMP/UDP/TCP/DHCP stack (~1 100 sor), e1000 (QEMU) és RTL8101E (netbook) driver, `net_connect` syscall CAP_NET-tel, AOP v1 keretezés (`docs/AOP.md`), `tools/bridge.py` az Anthropic SDK-val (`claude-opus-5`, streamelt válasz, hat eszköz), `agentd` ring 3-as agent-futtató, `ai` és `agent NÉV` parancsok, manifestek (`/etc/agents/chat.cap`, `coder.cap`). A `tests/fake_bridge.py` API-kulcs nélkül játssza el a hidat: a smoke-teszt 4. menetében a coder-agent a `/project/src` alá ír, a `Makefile` írására `E_CAP`-ot kap vissza a modell, a kontextus a `/state/agents/coder/context.txt`-be mentődik. Tervmódosítás: külön `aisvc` task helyett az `agentd` maga beszél a híddal a manifest `net` capability-jével, így minden eszköz-hívás közvetlenül a kernel `cap_check`-jén megy át, IPC-réteg nélkül. A PSK-titkosítás (3.1) még hátravan.
 
-### Phase 4 (kitekintés, nem tervezett részletesen)
+### Phase 4: a "projector" és a napi használat (terv, 2026-09-13)
 
-Osztott konzol (agent-napló + shell), USB-Ethernet, SMP-kísérlet, csak-olvasó FAT az adatcseréhez, lokális apró modell kísérlet.
+Cél: a netbook legyen napi használatra kényelmes, és kapjon egy új, a rendszerhez illő képességet: a **projector**. Ez nem böngésző. Egy cím vagy kérdés bemenetre a híd letölti és lecsupaszítja az oldalt (kép, JS, CSS eldobva), kinyeri az információt, adott mélységig követi a linkeket, és egy **szemantikus lenyomatot** készít; a netbook ezt a teljes képernyőn újrarendezi, billentyűvel járhatóvá teszi, és színnel az információ típusát, súlyát és a fókuszt jelöli, nem díszít. A lenyomat más kimenetekre is megy: az agent kontextusa, mentett jegyzet. Hibrid, mint az `ai`: gépi kinyerés alapból, AI csak értelmezéshez.
+
+Illeszkedés: a netbookon továbbra sincs TLS, HTTP és HTML-feldolgozás. A piszkos munka a hídon fut (Python, PC), a netbook egy kis, saját sémájú adatot kap a meglévő titkosított AOP-csatornán, és a `projector` egy ring 3-as program saját manifesttel (`net`, `console`, `fs.write /state/projector/**`). Kernel-változás minimális: nagyobb fogadópuffer, konzol-primitívek a teljes képernyős rajzoláshoz.
+
+**4.0 Apróságok (előre, mert gyorsak és minden nap számítanak)**
+
+1. Boot-szkript: `/state/rc` sorai a shellen futnak indításkor (pl. `kbd hu`); `/etc/rc` a ramdiskről az alapértelmezés.
+2. Tab-kiegészítés a sorszerkesztőben: parancsnevek, majd útvonalak.
+3. `time`, `date`, `time set HH:MM`, `date set ÉÉÉÉ-HH-NN`: CMOS RTC olvasás/írás, időzóna a `/state/tz`-ben; később SNTP a hídon át.
+4. `shot`: a konzol szöveges tartalma (170×48 + színek) a hídra megy, a PC a `shots/` alá menti, fotózás helyett. Ugyanezen az úton vágólap mindkét irányba: `paste` a PC vágólapját írja a sorszerkesztőbe, kijelölés a konzolon billentyűvel (jelölő mód) és `copy` a PC-re.
+5. `help` átrendezve: témák szerint, oszlopokban, egy-soros leírással; `help <parancs>` a részletekhez.
+6. Kezdőképernyő: AO-OS felirat, verzió, és állapotsor: billentyűzet-kiosztás, IP, híd elérhető-e (AOP PING a DHCP után), PSK van-e, lemez állapota.
+
+**4.1 Lenyomat-formátum és a cím-projekció**
+
+- A lenyomat JSON a dróton (a híd és az AI oldalán ez a természetes), de **rögzített, lapos sémával**, hogy a netbookon egy ~300 soros, részhalmazt értő elemző elég legyen: `{"q":…, "sources":[{"id","url","title"}], "nodes":[{"t":"title|para|fact|list|quote|code|link|table", "w":0..9, "s":forrás-id, "x":szöveg, "to":link-cél}]}`. Nincs beágyazott objektum a csomópontokon belül, a szöveg UTF-8.
+- Híd: `PROJECT` kérés (`url`, `depth`, `mode`), `IMPRINT` válasz darabolva. Kinyerés readability-jellegű heurisztikával (fő tartalom, címsorok, listák, táblázatok, kódblokkok), reklám- és navigációs zaj nélkül, AI nélkül.
+- Netbook: `projector <cím>`; teljes képernyős elrendezés (bal oszlop: vázlat és források; közép: tartalom; jobb: kapcsolódó linkek), fókusz-csomópont, navigáció: nyilak, Tab a források és oszlopok között, Enter a fókuszban lévő link projekciója, Backspace vissza, PgUp/PgDn, `/` keresés a lenyomatban, `s` mentés a `/state/projector/` alá. Szín = csomóponttípus és súly, inverz = fókusz.
+
+**4.2 Kérdés és mélység**
+
+- Kérdés-bemenet: a híd a kérdést kereső-URL-lé formázza, és a találati oldalt ugyanúgy projektálja, mint bármely lapot. A Google találati oldala botvédelemmel, beleegyező oldallal és JS-sel védett, ezért alapból a DuckDuckGo HTML-változatát (`html.duckduckgo.com/html/?q=…`) használjuk, ami tiszta HTML; a Google a Custom Search JSON API-n át választható (napi 100 kérés ingyen).
+- Linkkövetés `depth` mélységig, forrásonként korláttal és azonos-domain szabállyal; a lenyomat forrás-azonosítói mutatják, mi honnan jött.
+
+**4.3 Hibrid: AI a lenyomaton**
+
+- `projector <cím> ?kérdés` vagy a lenyomatban `a`: a híd a lenyomatot (nem a HTML-t) adja a modellnek relevancia-súlyozásra, csoportosításra és a kérdés megválaszolására; a válasz ugyanabban a sémában jön vissza (új `fact`/`para` csomópontok, `w` átsúlyozva), tehát a képernyő és a navigáció változatlan.
+- Az agent `project` eszközt kap: lenyomatot kér egy címre, és azt olvassa kontextusként; a manifest `net` szabálya és a hídon egy domain-lista korlátozza.
+
+Kilépési feltétel: a netbookon `projector https://…` a teljes képernyőn járható lenyomatot ad; egy kérdés a keresőn át ugyanígy; az `?kérdés` a modell válaszát a lenyomatba illeszti; `shot` egy fotó helyett szöveget ad a PC-n.
+
+Kitekintés Phase 4 után: osztott konzol (agent-napló + shell), USB-Ethernet vagy WiFi-stick (USB-stack), csak-olvasó FAT az adatcseréhez, lokális apró modell kísérlet.
 
 ---
 
