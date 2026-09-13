@@ -59,6 +59,7 @@ Minden szám little-endian.
 
 | 15 | PROJECT | OS → híd | `q=<cím vagy kérdés>\ndepth=<n>\n` |
 | 16 | IMPRINT | híd → OS | a lenyomat JSON-ban (lásd lent), legfeljebb 60 000 bájt |
+| 17 | FETCH | OS → híd | `name=<fájlnév>\n`; a híd a `share/` mappa fájlját FILE-keretekben (`data\nnév\n` + darab, ≤ 60 000 bájt) küldi, majd END `stop=fetch\nsize=N\n`; hiba: ERR |
 
 A 12–14 típusok (AOP 1.2) a `shot`, `copy`, `paste` parancsokat szolgálják: az `agentd` `--file` / `--clip`
 módban, a `clip` manifesttel (`/etc/agents/clip.cap`) küldi őket, a kézfogás és a titkosítás ugyanaz.

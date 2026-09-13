@@ -13,6 +13,7 @@ enum cap_kind {
     CAP_SYS_INFO,
     CAP_SYS_POWER,   /* reboot / poweroff */
     CAP_CONSOLE,     /* konzol irasa/olvasasa */
+    CAP_FB,          /* a framebuffer lekepezese a cimterbe (grafika, jatekok) */
     CAP_MAX_KIND
 };
 

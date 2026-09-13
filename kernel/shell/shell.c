@@ -83,6 +83,7 @@ static const struct cmd cmds[] = {
     { "shot",            "[NEV]",                "a kepernyo szovege a PC-re (a hid shots/ mappajaba)", 3 },
     { "copy",            "[N]",                  "az utolso parancs kimenete (vagy N sor) a PC vagolapjara", 3 },
     { "paste",           "[FAJL]",               "a PC vagolapja a parancssorba vagy fajlba", 3 },
+    { "fetch",           "NEV [CEL]",            "fajl a PC share/ mappajabol (alap: /state/inbox/NEV)", 3 },
     { "net dhcp",        "",                     "halozati allapot; cim kerese DHCP-vel", 4 },
     { "ip",              "CIM MASZK [ATJARO]",   "statikus cim", 4 },
     { "ping nc",         "CIM [PORT [SZOVEG]]",  "ICMP ping; TCP proba", 4 },
@@ -1013,6 +1014,30 @@ static void cmd_copy(const char *nstr)
     run_clip_agent(5, args);
 }
 
+/* fetch NEV [CEL]: a PC share/NEV fajlja; cel alapbol /state/inbox/NEV */
+static void cmd_fetch(int argc, char **argv)
+{
+    if (argc < 2) { kprintf("fetch NEV [CELFAJL]   (a PC-n a share/ mappabol; alap: /state/inbox/NEV)\n"); return; }
+    char path[VFS_PATH_MAX];
+    if (argc > 2) {
+        if (!canon(argv[2], path)) { kprintf("fetch: rossz utvonal\n"); return; }
+        struct stat st;
+        if (vfs_stat(path, &st) == 0 && st.type == 2) {           /* konyvtar: NEV alaja */
+            usize l = strlen(path);
+            if (l + strlen(argv[1]) + 2 >= sizeof path) { kprintf("fetch: tul hosszu utvonal\n"); return; }
+            if (l > 1) path[l++] = '/';
+            strcpy(path + l, argv[1]);
+        }
+    } else {
+        vfs_mkdir("/state/inbox");
+        snformat(path, sizeof path, "/state/inbox/%s", argv[1]);
+    }
+    char *args[] = { "fetch", "--fetch", argv[1], path };
+    quiet_run = true;
+    cmd_agent("fetch", "agentd", 4, args, 1);
+    quiet_run = false;
+}
+
 static void cmd_paste(const char *file)
 {
     vfs_unlink("/tmp/clip.txt");
@@ -1146,6 +1171,7 @@ static void execute(char *line)
     else if (!strcmp(c, "shot")) cmd_shot(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "copy")) cmd_copy(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "paste")) cmd_paste(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "fetch")) cmd_fetch(argc, argv);
     else if (!strcmp(c, "mem")) cmd_mem();
     else if (!strcmp(c, "cpu")) cmd_cpu();
     else if (!strcmp(c, "disk")) cmd_disk();

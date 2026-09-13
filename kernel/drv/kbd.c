@@ -99,16 +99,35 @@ static const struct keymap *layouts[2] = { &map_us, &map_hu };
 
 static struct waitq kbd_q;
 
-static void push(u16 code)
+static bool raw_mode;
+
+static void push_ev(u16 code, bool down)
 {
     u32 next = (rhead + 1) % RING;
     if (next == rtail)
         return;
     ring[rhead].code = code;
     ring[rhead].mods = mods;
+    ring[rhead].down = down;
     ring[rhead].tsc = rdtsc();
     rhead = next;
     waitq_wake_all(&kbd_q);
+}
+
+static void push(u16 code) { push_ev(code, true); }
+
+void kbd_set_raw(bool on)
+{
+    raw_mode = on;
+    rtail = rhead;                  /* a modvaltasnal a regi esemenyek nem kellenek */
+}
+
+bool kbd_raw(void) { return raw_mode; }
+
+/* nyers mod: modosito billentyuk is esemenyek */
+static void raw_mod(u16 key, bool release)
+{
+    if (raw_mode) push_ev(key, !release);
 }
 
 void kbd_tick(void)
@@ -130,8 +149,8 @@ static void kbd_irq(struct regs *r)
         e0 = false;
         u16 code = 0;
         switch (sc) {
-        case 0x1D: if (release) mods &= ~MOD_CTRL; else mods |= MOD_CTRL; return;
-        case 0x38: if (release) mods &= ~MOD_ALTGR; else mods |= MOD_ALTGR; return;
+        case 0x1D: if (release) mods &= ~MOD_CTRL; else mods |= MOD_CTRL; raw_mod(KEY_CTRL, release); return;
+        case 0x38: if (release) mods &= ~MOD_ALTGR; else mods |= MOD_ALTGR; raw_mod(KEY_ALTGR, release); return;
         case 0x48: code = KEY_UP; break;
         case 0x50: code = KEY_DOWN; break;
         case 0x4B: code = KEY_LEFT; break;
@@ -146,21 +165,26 @@ static void kbd_irq(struct regs *r)
         case 0x35: code = '/'; break;
         default: return;
         }
-        if (!release)
-            push(code);
+        if (raw_mode) push_ev(code, !release);
+        else if (!release) push(code);
         return;
     }
 
     switch (sc) {
-    case 0x2A: case 0x36: if (release) mods &= ~MOD_SHIFT; else mods |= MOD_SHIFT; return;
-    case 0x1D: if (release) mods &= ~MOD_CTRL; else mods |= MOD_CTRL; return;
-    case 0x38: if (release) mods &= ~MOD_ALT; else mods |= MOD_ALT; return;
-    case 0x3A: if (!release) caps = !caps; return;
+    case 0x2A: case 0x36: if (release) mods &= ~MOD_SHIFT; else mods |= MOD_SHIFT; raw_mod(KEY_SHIFT, release); return;
+    case 0x1D: if (release) mods &= ~MOD_CTRL; else mods |= MOD_CTRL; raw_mod(KEY_CTRL, release); return;
+    case 0x38: if (release) mods &= ~MOD_ALT; else mods |= MOD_ALT; raw_mod(KEY_ALT, release); return;
+    case 0x3A: if (!release) caps = !caps; raw_mod(KEY_CAPS, release); return;
+    }
+    const struct keymap *km = layouts[layout_id];
+    if (raw_mode) {
+        u16 rc = km->normal[sc];
+        if (rc) push_ev(rc, !release);
+        return;
     }
     if (release)
         return;
 
-    const struct keymap *km = layouts[layout_id];
     u16 code;
     if (mods & MOD_ALTGR)
         code = km->altgr[sc];
@@ -238,10 +262,12 @@ void kbd_init(void)
     pic_unmask(1);
 }
 
+static bool serial_key(struct key_event *ev);
+
 bool kbd_poll(struct key_event *ev)
 {
     if (rtail == rhead)
-        return false;
+        return serial_key(ev);          /* soros bemenet (QEMU-teszt) nem blokkolo modban is */
     *ev = ring[rtail];
     rtail = (rtail + 1) % RING;
     return true;
@@ -256,6 +282,7 @@ static bool serial_key(struct key_event *ev)
     while (serial_has_input()) {
         u8 c = serial_getc();
         ev->mods = 0;
+        ev->down = 1;
         ev->tsc = rdtsc();
         if (st == 0) {
             /* UTF-8 a soros vonalon: kodpontta alakitjuk, mint a billentyuzetnel */
@@ -296,7 +323,7 @@ void kbd_wait(struct key_event *ev)
         cli();                          /* ellenorzes + blokkolas atomian az IRQ-val szemben */
         if (kbd_poll(ev) || serial_key(ev)) { sti(); return; }
         if (task_current()) {
-            if (task_current()->killed) { sti(); ev->code = 0; ev->mods = 0; ev->tsc = rdtsc(); return; }
+            if (task_current()->killed) { sti(); ev->code = 0; ev->mods = 0; ev->down = 0; ev->tsc = rdtsc(); return; }
             task_block_on(&kbd_q);      /* IF=1-gyel ter vissza */
         } else {
             idle_enter();

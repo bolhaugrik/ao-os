@@ -5,3 +5,4 @@ rootfs/boot/
 *.log
 __pycache__/
 shots/
+share/

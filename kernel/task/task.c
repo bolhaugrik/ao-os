@@ -11,6 +11,8 @@
 #include "../cpu/idt.h"
 #include "../cpu/pit.h"
 #include "../cpu/panic.h"
+#include "../drv/kbd.h"
+#include "../drv/console.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../mm/kheap.h"
@@ -428,6 +430,8 @@ NORETURN void task_exit(int code)
         panic("az idle task nem lephet ki");
     for (int i = 0; i < HANDLE_MAX; i++)
         close_handle(&t->handles[i]);
+    if (t->con_mode) { t->con_mode = 0; kbd_set_raw(false); }   /* a shell szoveges modot kap vissza */
+    if (t->fb_mapped) { t->fb_mapped = false; console_suspend(false); }
     if (t->user) {
         vmm_switch(vmm_boot_pml4());
         vmm_destroy_space(t->pml4);

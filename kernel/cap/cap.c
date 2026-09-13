@@ -6,7 +6,7 @@
 #include "../lib/fmt.h"
 
 static const char *kind_names[CAP_MAX_KIND] = {
-    "none", "fs.read", "fs.write", "exec", "net", "spawn", "sysinfo", "power", "console",
+    "none", "fs.read", "fs.write", "exec", "net", "spawn", "sysinfo", "power", "console", "fb",
 };
 
 const char *cap_kind_name(enum cap_kind k) { return k < CAP_MAX_KIND ? kind_names[k] : "?"; }
@@ -39,6 +39,7 @@ void capset_root(struct capset *cs)
     add(cs, CAP_SYS_INFO, "");
     add(cs, CAP_SYS_POWER, "");
     add(cs, CAP_CONSOLE, "");
+    add(cs, CAP_FB, "");
 }
 
 /* ---------------------------------------------------------------- glob */

@@ -51,7 +51,7 @@ TOOL_DEFS = [
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, load_psk, default_psk_path,  # noqa: E402
                  parse_file, parse_kv, HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR,
-                 PING, PONG, FILE, CLIP_GET, CLIP, PROJECT, IMPRINT)
+                 PING, PONG, FILE, CLIP_GET, CLIP, PROJECT, IMPRINT, FETCH)
 import projector  # noqa: E402
 import aocrypto  # noqa: E402
 
@@ -235,6 +235,20 @@ def save_shot(name, text):
     return os.path.relpath(path, ROOT)
 
 
+FETCH_CHUNK = 60000
+
+
+def share_path(name):
+    """A share/ mappa egy fajlja nev szerint: nincs utvonal, nincs kilepes a mappabol."""
+    if not name or "/" in name or "\\" in name or name.startswith(".") or len(name) > 120:
+        raise ValueError(f"ervenytelen nev: {name!r}")
+    d = os.path.join(ROOT, "share")
+    path = os.path.join(d, name)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"nincs ilyen fajl a share/ mappaban: {name}")
+    return path
+
+
 def clipboard_get():
     import tkinter
     r = tkinter.Tk()
@@ -364,6 +378,23 @@ class Session:
                         self.conn.send(IMPRINT, data)
                     except Exception as e:  # halozati/HTML-hiba a modellnek szolo szoveg nelkul
                         self.conn.send(ERR, f"projector: {type(e).__name__}: {e}"[:300])
+                elif ftype == FETCH:
+                    name = parse_kv(payload).get("name", "")
+                    try:
+                        path = share_path(name)
+                        size = os.path.getsize(path)
+                        self.log(f"fetch: {name} ({size} bajt)")
+                        with open(path, "rb") as f:
+                            sent = 0
+                            while True:
+                                chunk = f.read(FETCH_CHUNK)
+                                if not chunk:
+                                    break
+                                self.conn.send(FILE, b"data\n" + name.encode("utf-8") + b"\n" + chunk)
+                                sent += len(chunk)
+                        self.conn.send(END, f"stop=fetch\nsize={size}\n")
+                    except Exception as e:  # nincs ilyen fajl, rossz nev
+                        self.conn.send(ERR, f"fetch: {e}"[:300])
                 elif ftype == CLIP_GET:
                     try:
                         text = clipboard_get()

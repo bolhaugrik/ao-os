@@ -39,6 +39,7 @@ struct sock {
     bool reset;
     struct waitq q;
     u64 last_activity;
+    u32 adv_win;                /* az utoljara hirdetett fogadoablak */
 };
 
 static struct sock socks[TCP_SOCKS];
@@ -78,7 +79,9 @@ static int send_seg(struct sock *s, u32 seq, u8 flags, const void *data, usize l
     h->off = (u8)((sizeof *h / 4) << 4);
     h->flags = flags;
     u32 win = TCP_RXBUF - s->rx_count;
-    h->win = htons((u16)(win > 65535 ? 65535 : win));
+    if (win > 65535) win = 65535;
+    s->adv_win = win;
+    h->win = htons((u16)win);
     if (len) memcpy(pkt + sizeof *h, data, len);
     h->csum = htons(tcp_csum(net_cfg.ip, s->rip, pkt, sizeof *h + len));
     return net_send_ip(s->rip, 6, pkt, sizeof *h + len);
@@ -298,6 +301,11 @@ isize tcp_recv(int id, void *buf, usize n, u32 timeout_ms)
         s->rx_tail = (s->rx_tail + 1) % TCP_RXBUF;
         s->rx_count--;
     }
+    /* ablak-frissites: ha a hirdetett ablak kicsi volt, es most felszabadult a hely, szolunk a
+     * kuldonek, kulonben csak a persist-probai (masodpercek) utan folytatna */
+    if (s->adv_win < TCP_RXBUF / 2 && TCP_RXBUF - s->rx_count >= TCP_RXBUF / 2 &&
+        (s->state == T_ESTABLISHED || s->state == T_CLOSE_WAIT))
+        send_seg(s, s->snd_nxt, F_ACK, NULL, 0);
     sti();
     return (isize)got;
 }

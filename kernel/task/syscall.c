@@ -8,6 +8,8 @@
 #include "../cpu/tsc.h"
 #include "../drv/console.h"
 #include "../drv/kbd.h"
+#include "../drv/fb.h"
+#include "../mm/vmm.h"
 #include "../fs/vfs.h"
 #include "../net/net.h"
 #include "../net/tcp.h"
@@ -49,6 +51,20 @@ static isize con_read(u8 *buf, usize n)
 {
     if (n == 0) return 0;
     struct key_event ev;
+    u32 mode = task_current()->con_mode;
+    if (mode & CON_RAW) {
+        /* rekordok: amennyi belefer; az elsore var (ha nem nonblock) */
+        usize got = 0;
+        while (got + sizeof(struct key_ev) <= n) {
+            if (got == 0 && !(mode & CON_NONBLOCK)) kbd_wait(&ev);
+            else if (!kbd_poll(&ev)) break;
+            if (task_current()->killed) return E_TIMEOUT;
+            struct key_ev *k = (struct key_ev *)(buf + got);
+            k->code = ev.code; k->mods = ev.mods; k->down = ev.down;
+            got += sizeof *k;
+        }
+        return (isize)got;
+    }
     kbd_wait(&ev);
     if (task_current()->killed)
         return E_TIMEOUT;
@@ -303,6 +319,30 @@ static int sys_getcaps(struct task *t, u64 ubuf, usize n)
     return (int)pos;
 }
 
+/* a framebuffer lekepezese a task cimterebe (WC, csak a kepernyo lapjai); a konzol addig szunetel */
+#define FB_USER_VA 0x00007E0000000000ULL
+
+static int sys_fb_map(struct task *t, u64 uptr_)
+{
+    if (!cap_check(t, CAP_FB, NULL)) return E_CAP;
+    if (!user_range_ok(t, uptr_, sizeof(struct fbinfo))) return E_INVAL;
+    if (!fb.base) return E_NOSYS;
+    u64 pa = (u64)(uptr)fb.base - DIRECT_MAP_BASE;
+    u64 size = (u64)fb.pitch * fb.height;
+    if (!t->fb_mapped) {
+        for (u64 off = 0; off < size; off += PAGE_SIZE)
+            if (!vmm_map(t->pml4, FB_USER_VA + off, pa + off, PTE_W | PTE_U | PTE_PWT | PTE_NX))
+                return E_NOMEM;
+        t->fb_mapped = true;
+        console_suspend(true);
+    }
+    struct fbinfo *fi = (struct fbinfo *)(uptr)uptr_;
+    fi->vaddr = FB_USER_VA;
+    fi->width = fb.width; fi->height = fb.height; fi->pitch = fb.pitch;
+    fi->bpp = fb.bpp; fi->rpos = fb.rpos; fi->gpos = fb.gpos; fi->bpos = fb.bpos;
+    return 0;
+}
+
 static int sys_sysinfo(struct task *t, u64 uptr_)
 {
     if (!cap_check(t, CAP_SYS_INFO, NULL)) return E_CAP;
@@ -397,6 +437,13 @@ void syscall_dispatch(struct regs *r)
         break;
     case SYS_NET_CONNECT: ret = sys_net_connect(t, a); break;
     case SYS_NET_INFO: ret = sys_net_info(t, a); break;
+    case SYS_FB_MAP: ret = sys_fb_map(t, a); break;
+    case SYS_CON_MODE:
+        if (!cap_check(t, CAP_CONSOLE, NULL)) { ret = E_CAP; break; }
+        t->con_mode = (u32)a & (CON_RAW | CON_NONBLOCK);
+        kbd_set_raw((t->con_mode & CON_RAW) != 0);
+        ret = 0;
+        break;
     default:          ret = E_NOSYS; break;
     }
     (void)d;

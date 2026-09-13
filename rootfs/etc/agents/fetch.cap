@@ -1,0 +1,12 @@
+# fetch: fajl a PC share/ mappajabol a netbookra (a hidon at). Csak ezekre a helyekre irhat.
+agent fetch
+console
+net       *:9010
+fs.read   /etc/ai/**
+fs.read   /state/ai/**
+fs.write  /state/inbox/**
+fs.write  /state/games/**
+fs.write  /project/**
+fs.write  /tmp/**
+mem       4M
+deadline  1800s

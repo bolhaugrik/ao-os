@@ -12,7 +12,7 @@ import threading
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, parse_file, parse_kv,  # noqa: E402
                  HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, ERR, PING, PONG, FILE, CLIP_GET, CLIP,
-                 PROJECT, IMPRINT)
+                 PROJECT, IMPRINT, FETCH)
 import projector  # noqa: E402
 
 BUILD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build")
@@ -98,6 +98,21 @@ def handle(sock, addr, psk):
                 conn.send(END, "stop=file\n")
             elif ftype == CLIP_GET:
                 conn.send(CLIP, "echo vagolap-ok\n")
+            elif ftype == FETCH:
+                name = parse_kv(payload).get("name", "")
+                print(f"fetch: {name!r}", flush=True)
+                if name in ("nagy.bin", "oriasi.bin"):
+                    # ellenorizheto minta: az i. bajt = i % 251; az oriasi tullep az egyszeres indirekt hataron (4144 KiB)
+                    size = 200000 if name == "nagy.bin" else 4400000
+                    data = bytes(bytearray(i % 251 for i in range(size)))
+                    for off in range(0, len(data), 60000):
+                        conn.send(FILE, b"data\n" + name.encode() + b"\n" + data[off:off + 60000])
+                    conn.send(END, f"stop=fetch\nsize={len(data)}\n")
+                elif name == "szoveg.txt":
+                    conn.send(FILE, b"data\nszoveg.txt\nfetch-teszt sor\n")
+                    conn.send(END, "stop=fetch\nsize=16\n")
+                else:
+                    conn.send(ERR, f"fetch: nincs ilyen fajl a share/ mappaban: {name}")
             elif ftype == PROJECT:
                 q = parse_kv(payload).get("q", "")
                 print(f"projector: {q!r}", flush=True)

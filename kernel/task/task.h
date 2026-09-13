@@ -33,6 +33,8 @@ struct task {
     u32 id;
     enum task_state state;
     char name[32];
+    u32 con_mode;               /* CON_* (nyers billentyu-esemenyek); kilepeskor visszaall */
+    bool fb_mapped;             /* a framebuffer a cimterben van (fb capability); kilepeskor a konzol visszajon */
     bool user;
     bool killed;
     u64 pml4;

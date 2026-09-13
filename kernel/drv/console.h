@@ -24,6 +24,7 @@ u32  console_rows(void);
 void console_get_cursor(u32 *col, u32 *row);
 void console_set_col(u32 col);        /* kurzor oszlopa az aktualis sorban */
 void console_set_serial_mirror(bool on);
+void console_suspend(bool on);        /* grafikus program fut: nem rajzol; visszakapcsolaskor mindent ujrarajzol */
 
 /* Sorok visszaolvasasa (copy, shot). A sorszam monoton no a boot ota; a gyurubol mar
  * kiesett sor false-t ad. A szoveg UTF-8, zaro szokozok nelkul. */

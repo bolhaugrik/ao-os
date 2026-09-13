@@ -19,7 +19,8 @@ struct a2_inode {
     u64 mtime;
     u32 direct[12];
     u32 indirect;
-    u32 pad[13];
+    u32 dindirect;      /* ketszeres indirekt: 1024 tabla x 1024 blokk (4 GiB); a regi inode-okban 0 */
+    u32 pad[12];
 } PACKED;
 _Static_assert(sizeof(struct a2_inode) == 128, "inode");
 
@@ -197,31 +198,69 @@ static u32 imap(struct a2fs *fs, struct a2_inode *in, u32 ino, u32 idx, bool all
         return in->direct[idx];
     }
     idx -= NDIRECT;
-    if (idx >= NIND) return 0;
-    if (!in->indirect) {
+    u32 tab[NIND];
+    if (idx < NIND) {
+        if (!in->indirect) {
+            if (!alloc) return 0;
+            in->indirect = balloc(fs);
+            if (!in->indirect) return 0;
+            iwrite(fs, ino, in);
+        }
+        if (bread(fs, in->indirect, tab)) return 0;
+        if (!tab[idx] && alloc) {
+            tab[idx] = balloc(fs);
+            if (tab[idx]) bwrite(fs, in->indirect, tab);
+        }
+        return tab[idx];
+    }
+    /* ketszeres indirekt */
+    idx -= NIND;
+    if (idx >= NIND * NIND) return 0;
+    if (!in->dindirect) {
         if (!alloc) return 0;
-        in->indirect = balloc(fs);
-        if (!in->indirect) return 0;
+        in->dindirect = balloc(fs);
+        if (!in->dindirect) return 0;
         iwrite(fs, ino, in);
     }
-    u32 tab[NIND];
-    if (bread(fs, in->indirect, tab)) return 0;
-    if (!tab[idx] && alloc) {
-        tab[idx] = balloc(fs);
-        if (tab[idx]) bwrite(fs, in->indirect, tab);
+    if (bread(fs, in->dindirect, tab)) return 0;
+    u32 t1 = idx / NIND, t2 = idx % NIND;
+    if (!tab[t1]) {
+        if (!alloc) return 0;
+        tab[t1] = balloc(fs);
+        if (!tab[t1]) return 0;
+        bwrite(fs, in->dindirect, tab);
     }
-    return tab[idx];
+    u32 sub = tab[t1];
+    if (bread(fs, sub, tab)) return 0;
+    if (!tab[t2] && alloc) {
+        tab[t2] = balloc(fs);
+        if (tab[t2]) bwrite(fs, sub, tab);
+    }
+    return tab[t2];
 }
 
 static void ifree_blocks(struct a2fs *fs, struct a2_inode *in)
 {
     for (u32 i = 0; i < NDIRECT; i++) { bfree(fs, in->direct[i]); in->direct[i] = 0; }
+    u32 tab[NIND];
     if (in->indirect) {
-        u32 tab[NIND];
         if (bread(fs, in->indirect, tab) == 0)
             for (u32 i = 0; i < NIND; i++) bfree(fs, tab[i]);
         bfree(fs, in->indirect);
         in->indirect = 0;
+    }
+    if (in->dindirect) {
+        if (bread(fs, in->dindirect, tab) == 0) {
+            for (u32 i = 0; i < NIND; i++) {
+                if (!tab[i]) continue;
+                u32 sub[NIND];
+                if (bread(fs, tab[i], sub) == 0)
+                    for (u32 k = 0; k < NIND; k++) bfree(fs, sub[k]);
+                bfree(fs, tab[i]);
+            }
+        }
+        bfree(fs, in->dindirect);
+        in->dindirect = 0;
     }
     in->size = 0;
 }
@@ -444,12 +483,25 @@ static void fsck_bitmap(struct a2fs *fs)
         if (iread(fs, ino, &in) || in.type == 0) continue;
         for (u32 i = 0; i < NDIRECT; i++)
             if (in.direct[i] && in.direct[i] < fs->sb.block_count && !bm_test(fs, in.direct[i])) { bm_set(fs, in.direct[i]); used++; }
+        u32 tab[NIND];
         if (in.indirect && in.indirect < fs->sb.block_count) {
             if (!bm_test(fs, in.indirect)) { bm_set(fs, in.indirect); used++; }
-            u32 tab[NIND];
             if (bread(fs, in.indirect, tab) == 0)
                 for (u32 i = 0; i < NIND; i++)
                     if (tab[i] && tab[i] < fs->sb.block_count && !bm_test(fs, tab[i])) { bm_set(fs, tab[i]); used++; }
+        }
+        if (in.dindirect && in.dindirect < fs->sb.block_count) {
+            if (!bm_test(fs, in.dindirect)) { bm_set(fs, in.dindirect); used++; }
+            if (bread(fs, in.dindirect, tab) == 0) {
+                for (u32 i = 0; i < NIND; i++) {
+                    if (!tab[i] || tab[i] >= fs->sb.block_count) continue;
+                    if (!bm_test(fs, tab[i])) { bm_set(fs, tab[i]); used++; }
+                    u32 sub[NIND];
+                    if (bread(fs, tab[i], sub) == 0)
+                        for (u32 k = 0; k < NIND; k++)
+                            if (sub[k] && sub[k] < fs->sb.block_count && !bm_test(fs, sub[k])) { bm_set(fs, sub[k]); used++; }
+                }
+            }
         }
     }
     fs->sb.free_blocks = fs->sb.block_count - used;

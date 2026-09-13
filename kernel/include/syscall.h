@@ -28,7 +28,28 @@ enum {
     SYS_GETCWD,       /* (buf, n) */
     SYS_NET_CONNECT,  /* ("ip:port") -> fd; read/write/close a socketen */
     SYS_NET_INFO,     /* (struct netinfo*) */
+    SYS_CON_MODE,     /* (CON_* jelzok) -> a konzol-bemenet modja (nyers billentyu-esemenyek) */
+    SYS_FB_MAP,       /* (struct fbinfo*) -> a framebuffer a cimterbe (fb capability); a konzol szunetel */
     SYS_MAX
+};
+
+/* SYS_FB_MAP: a kepernyo pixelei kozvetlenul irhatok a vaddr cimtol; 32 bites pixelek,
+ * a sorok pitch bajtonkent; a task kilepesekor a konzol visszarajzolja magat */
+struct fbinfo {
+    u64 vaddr;
+    u32 width, height, pitch;
+    u8  bpp, rpos, gpos, bpos;
+};
+
+/* konzol-bemenet modja (SYS_CON_MODE); a task kilepesekor visszaall szovegesre */
+#define CON_TEXT     0   /* karakterek es ESC-szekvenciak, csak lenyomasok */
+#define CON_RAW      1   /* struct key_ev rekordok: lenyomas es felengedes, modositok is */
+#define CON_NONBLOCK 2   /* olvasas ures sornal 0-val ter vissza (jatek-ciklus) */
+
+struct key_ev {
+    u16 code;       /* Unicode kodpont vagy KEY_* (0xE000+: nyilak..., 0xE020+: Shift, Ctrl, Alt, AltGr, Caps) */
+    u8  mods;       /* MOD_* bitek */
+    u8  down;       /* 1 lenyomas, 0 felengedes */
 };
 
 /* hibakodok */

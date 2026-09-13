@@ -2,6 +2,7 @@
 agent game
 console
 sysinfo
+fb
 fs.read   /state/games/**
 fs.write  /state/games/**
 mem       4M

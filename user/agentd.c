@@ -268,6 +268,59 @@ static int do_file(const char *kind, const char *name, const char *path)
     return rc;
 }
 
+/* --fetch NEV UTVONAL: a PC share/NEV fajlja darabokban a netbook fajljaba */
+static int do_fetch(const char *name, const char *path)
+{
+    char req[160];
+    usize nl = strlen(name);
+    if (nl > 120) { ao_puts("agentd: tul hosszu nev\n"); return 1; }
+    memcpy(req, "name=", 5);
+    memcpy(req + 5, name, nl);
+    req[5 + nl] = '\n';
+    aop_send(AOP_FETCH, req, 6 + nl);
+    int fd = -1;
+    u64 total = 0;
+    u64 t0 = ao_ticks();
+    for (;;) {
+        u16 type;
+        usize len;
+        int e = aop_recv(&type, &len);
+        if (e) { ao_printf("agentd: kapcsolat: %s\n", ao_errstr(e)); if (fd >= 0) ao_close(fd); return 4; }
+        if (type == AOP_FILE) {
+            /* "data\nNEV\n" + tartalom */
+            usize p = 0, nls = 0;
+            while (p < len && nls < 2) { if (aop_payload[p] == '\n') nls++; p++; }
+            if (nls < 2) continue;
+            if (fd < 0) {
+                fd = ao_open(path, O_WRITE | O_CREATE | O_TRUNC);
+                if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
+            }
+            usize n = len - p, done = 0;
+            while (done < n) {
+                isize w = ao_write(fd, aop_payload + p + done, n - done);
+                if (w <= 0) { ao_printf("agentd: iras: %s\n", ao_errstr((int)w)); ao_close(fd); return 3; }
+                done += (usize)w;
+            }
+            total += n;
+            if ((total / 65536) % 4 == 0) { ao_printf("\r  %lu KiB", total / 1024); }
+        } else if (type == AOP_END) {
+            break;
+        } else if (type == AOP_ERR) {
+            ao_printf("[hid hiba: %s]\n", (char *)aop_payload);
+            if (fd >= 0) ao_close(fd);
+            return 5;
+        }
+    }
+    if (fd < 0) {
+        fd = ao_open(path, O_WRITE | O_CREATE | O_TRUNC);      /* ures fajl */
+        if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
+    }
+    ao_close(fd);
+    u64 ms = (ao_ticks() - t0) * 10;
+    ao_printf("\r%s: %lu bajt, %lu ms%s\n", path, total, ms, ms ? "" : "");
+    return 0;
+}
+
 /* --clip UTVONAL: a PC vagolapja a fajlba */
 static int do_clip(const char *path)
 {
@@ -293,9 +346,11 @@ int main(int argc, char **argv)
     static char caps[1024], ctx[8192], task[1024];
     if (argc < 2) { ao_puts("agentd: feladat szovege kell\n"); return 1; }
     bool mode_file = strcmp(argv[1], "--file") == 0, mode_clip = strcmp(argv[1], "--clip") == 0;
+    bool mode_fetch = strcmp(argv[1], "--fetch") == 0;
     if (mode_file && argc < 5) { ao_puts("agentd --file KIND NEV UTVONAL\n"); return 1; }
     if (mode_clip && argc < 3) { ao_puts("agentd --clip UTVONAL\n"); return 1; }
-    quiet = mode_file || mode_clip;
+    if (mode_fetch && argc < 4) { ao_puts("agentd --fetch NEV UTVONAL\n"); return 1; }
+    quiet = mode_file || mode_clip || mode_fetch;
     usize tl = 0;
     for (int i = 1; i < argc && tl + strlen(argv[i]) + 2 < sizeof task; i++) {
         usize l = strlen(argv[i]);
@@ -314,8 +369,8 @@ int main(int argc, char **argv)
     }
     int e = aop_connect(agent_name, quiet);
     if (e) return e;
-    if (mode_file || mode_clip) {
-        int rc = mode_file ? do_file(argv[2], argv[3], argv[4]) : do_clip(argv[2]);
+    if (mode_file || mode_clip || mode_fetch) {
+        int rc = mode_file ? do_file(argv[2], argv[3], argv[4]) : mode_fetch ? do_fetch(argv[2], argv[3]) : do_clip(argv[2]);
         aop_close();
         return rc;
     }

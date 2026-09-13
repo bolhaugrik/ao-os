@@ -4,7 +4,7 @@
 #include "types.h"
 
 #define TCP_SOCKS 4
-#define TCP_RXBUF 16384
+#define TCP_RXBUF 65536
 #define TCP_MSS   1024
 
 void tcp_init(void);

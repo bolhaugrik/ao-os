@@ -34,6 +34,12 @@ SESSIONS = [
         ("run hello x y\n", "rc=0"),
         ("run fault", "rc=-17 (kivetel)"),
         ("ps", "shell"),
+        ("run keytest", "nyers mod"),
+        ("ab\x1b[Aq", "esemeny"),                 # a, b, Fel, q (+ az Enter, ha egy olvasasba esik)
+        ("echo szoveges-mod-vissza", "szoveges-mod-vissza"),
+        ("run fbtest\n", "fbtest: ok"),
+        ("spawn /etc/agents/clip.cap fbtest", "fbtest: fb: E_CAP"),
+        ("echo konzol-vissza", "konzol-vissza"),
         ("write /tmp/t.txt proba szoveg", "bajt"),
         ("cat /tmp/t.txt", "proba szoveg"),
         ("mkdir /tmp/project", "AO> "),
@@ -135,6 +141,16 @@ SESSIONS = [
         ("\x1b[B\x1b[Bs", "mentve: /state/projector/teszt-lap-cime.json"),
         ("q", "projector: Teszt lap cime ("),
         ("cat /state/projector/teszt-lap-cime.json", "\"t\":\"quote\""),
+        ("fetch szoveg.txt", "/state/inbox/szoveg.txt: 16 bajt"),
+        ("cat /state/inbox/szoveg.txt", "fetch-teszt sor"),
+        ("mkdir /state/games", "AO> "),
+        ("fetch nagy.bin /state/games", "/state/games/nagy.bin: 200000 bajt"),
+        ("ls /state/games", "nagy.bin"),
+        ("fetch nincs.txt", "nincs ilyen fajl a share/"),
+        ("fetch oriasi.bin /state/games", "/state/games/oriasi.bin: 4400000 bajt"),   # AOFS2 ketszeres indirekt
+        ("ls /state/games", "4400000 B"),
+        ("rm /state/games/oriasi.bin", "AO> "),
+        ("sync", "sync: ok"),
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
         ("cat /state/games/2048", "AO> "),
@@ -253,7 +269,7 @@ def main():
                 ok &= found
                 continue
             s.sendall(c.encode("utf-8") + b"\n")
-            out, found = recv_until(s, expect, 20 if c in ("install", "IGEN") else 8)
+            out, found = recv_until(s, expect, 90 if c.startswith(("install", "IGEN", "fetch")) else 8)
             log.append(out)
             if expect not in ("", "IGEN", "AO> "):
                 rest, _ = recv_until(s, "AO> ", 3)

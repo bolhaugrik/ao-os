@@ -641,7 +641,18 @@ Illeszkedés: a netbookon továbbra sincs TLS, HTTP és HTML-feldolgozás. A pis
 
 Kilépési feltétel: a netbookon `projector https://…` a teljes képernyőn járható lenyomatot ad; egy kérdés a keresőn át ugyanígy; az `?kérdés` a modell válaszát a lenyomatba illeszti; `shot` egy fotó helyett szöveget ad a PC-n.
 
-Kitekintés Phase 4 után: osztott konzol (agent-napló + shell), USB-Ethernet vagy WiFi-stick (USB-stack), csak-olvasó FAT az adatcseréhez, lokális apró modell kísérlet.
+### Phase 5: "akkor OS, ha fut rajta a Doom" (2026-09-13-tól)
+
+Egy külső hozzászólás nyomán: a Doom nem a játék miatt mérce, hanem mert pontosan azokat az alrendszereket követeli, amiktől egy OS teljes lesz. A port (PureDOOM: egy C-fájl, libc nélkül, tucatnyi visszahívással) a rendszer ellenőrző mérése; az előfeltételek mind általánosan hasznosak. Sorrend és állapot:
+
+1. **Fájl a PC-ről a netbookra** (kész, QEMU-ban igazolva): `fetch NÉV [CÉL]` a híd `share/` mappájából (AOP 17 `FETCH`, FILE-darabok + END), alap cél `/state/inbox/`, saját `fetch.cap` (csak `/state/inbox`, `/state/games`, `/project`, `/tmp` írható). Közben: az AOFS v2 kétszeres indirekt blokkot kapott (4 MB helyett 4 GB a fájlméret-határ; a formátum visszafelé kompatibilis), és a TCP fogadó oldala ablak-frissítést küld, ha a program kiolvasta a puffert (64 KiB-ra nőtt); enélkül a küldő csak a "persist" próbákkal haladt: 200 KB 38,8 s helyett 1,0 s, 4,4 MB kb. 15 s. A ramfs (`/tmp`) nagy fájlt nem bír, ez ismert korlát.
+2. **Nyers billentyűzet** (kész): `SYS_CON_MODE` `CON_RAW` [`| CON_NONBLOCK`]: a program `struct key_ev` rekordokat kap lenyomással és felengedéssel, a módosítók (Shift, Ctrl, Alt, AltGr, Caps) külön billentyűk; kilépéskor a kernel visszaállítja a szöveges módot. `run keytest` mutatja.
+3. **`fb` capability** (kész): `SYS_FB_MAP` a képernyő lapjait WC-vel a task címterébe képezi (`0x7E0000000000`), a konzol addig nem rajzol, a task kilépésekor mindent újrarajzol. A manifest `fb` sora kell hozzá; nélküle `E_CAP`. `run fbtest`: teljes képernyős színátmenet és mozgó négyzet ring 3-ból (QEMU-ban a teljes kép 10 ms).
+4. FPU/SSE állapot mentése taskváltáskor, SSE engedélyezése a programoknak.
+5. Felhasználói memóriafoglaló (`malloc`) a manifest korlátján belül.
+6. PureDOOM-port: 320×200 palettás kép háromszoros nagyítással a képernyő közepére, 35 Hz, `doom1.wad` a `/state/games/` alatt a `fetch`-csel.
+
+Kitekintés Phase 5 után: osztott konzol (agent-napló + shell), USB-Ethernet vagy WiFi-stick (USB-stack), csak-olvasó FAT az adatcseréhez, lokális apró modell kísérlet, hang (HD Audio).
 
 ---
 

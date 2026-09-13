@@ -26,6 +26,8 @@ int   ao_getpid(void);
 u64   ao_ticks(void);
 int   ao_net_connect(const char *addr);   /* "ip:port" -> fd */
 int   ao_net_info(struct netinfo *ni);
+int   ao_con_mode(u32 mode);              /* CON_TEXT / CON_RAW [| CON_NONBLOCK]; read(0) ekkor struct key_ev-eket ad */
+int   ao_fb_map(struct fbinfo *fi);       /* fb capability: a kepernyo pixelei fi->vaddr-tol; kilepesig a konzol szunetel */
 
 void  ao_puts(const char *s);
 int   ao_printf(const char *fmt, ...);

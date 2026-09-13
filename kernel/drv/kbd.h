@@ -9,6 +9,7 @@ enum {
     KEY_UP = 0xE000, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
     KEY_PGUP, KEY_PGDN, KEY_INS, KEY_DEL, KEY_ESC,
     KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12,
+    KEY_SHIFT = 0xE020, KEY_CTRL, KEY_ALT, KEY_ALTGR, KEY_CAPS,     /* csak nyers modban */
 };
 
 #define MOD_SHIFT 1
@@ -17,8 +18,9 @@ enum {
 #define MOD_ALTGR 8
 
 struct key_event {
-    u16 code;       /* Unicode kodpont vagy KEY_* */
+    u16 code;       /* Unicode kodpont vagy KEY_* (nyers modban a kiosztas modositatlan kodja) */
     u8  mods;
+    u8  down;       /* 1 lenyomas, 0 felengedes (szoveges modban csak lenyomasok jonnek) */
     u64 tsc;        /* az IRQ idopontja */
 };
 
@@ -37,4 +39,8 @@ bool kbd_poll(struct key_event *ev);      /* nem blokkol */
 void kbd_wait(struct key_event *ev);      /* blokkol, hlt-vel; soros bemenetet is figyel */
 void kbd_tick(void);                      /* PIT-bol: soros bemenet figyelese, ebresztes */
 void kbd_set_layout(const char *name);    /* "us" vagy "hu" */
+/* nyers mod (jatekok): felengedes is esemeny, a modositok (Shift, Ctrl...) kulon billentyuk,
+ * a kod a kiosztas modositatlan erteke (Shift/Caps/Ctrl nem alakitja at) */
+void kbd_set_raw(bool on);
+bool kbd_raw(void);
 const char *kbd_layout(void);

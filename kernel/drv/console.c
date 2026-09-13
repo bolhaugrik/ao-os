@@ -369,9 +369,20 @@ static void draw_row(u32 r)
     }
 }
 
+static bool suspended;
+
+void console_suspend(bool on)
+{
+    suspended = on;
+    if (!on) {
+        all_dirty = true;
+        console_flush();
+    }
+}
+
 void console_flush(void)
 {
-    if (!ready)
+    if (!ready || suspended)
         return;
     if (all_dirty) {
         for (u32 r = 0; r < rows; r++)
