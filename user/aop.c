@@ -101,7 +101,15 @@ static int recv_frame(u16 *type, usize *len)
     *type = get_u16(hdr + 4);
     u16 flags = get_u16(hdr + 6);
     u32 l = get_u32(hdr + 8);
-    if (l >= sizeof aop_payload - 16) return E_LIMIT;
+    if (l >= sizeof aop_payload - 16) {
+        /* tul nagy keret: eldobjuk, de a folyam szinkronban marad */
+        while (l) {
+            u32 c = l < sizeof aop_payload ? l : (u32)sizeof aop_payload;
+            if (recv_all(aop_payload, c)) return E_PIPE;
+            l -= c;
+        }
+        return E_LIMIT;
+    }
     e = recv_all(aop_payload, l);
     if (e) return e;
     if (flags & FLAG_ENC) {

@@ -146,6 +146,8 @@ void tcp_tick(void)
             if (now > s->last_activity + 200) { s->state = T_CLOSED; waitq_wake_all(&s->q); }
             continue;
         }
+        if (!inflight(s) && s->tx_len && (s->state == T_ESTABLISHED || s->state == T_CLOSE_WAIT))
+            tx_pump(s);                 /* el nem kuldott adat (pl. atmeneti kuldesi hiba utan): ujra probaljuk */
         if (inflight(s) && now >= s->rto_tick) {
             if (++s->retries > 8) {
                 s->reset = true;

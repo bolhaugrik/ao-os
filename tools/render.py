@@ -9,10 +9,24 @@ import sys
 import threading
 import zlib
 
-LINKS_JS = """() => Array.from(document.querySelectorAll('a[href]')).map(a => {
-  const r = a.getBoundingClientRect();
-  return [Math.round(r.x + window.scrollX), Math.round(r.y + window.scrollY), Math.round(r.width), Math.round(r.height), a.href];
-}).filter(l => l[2] > 2 && l[3] > 2 && l[1] >= 0).slice(0, 400)"""
+LINKS_JS = """() => {
+  const out = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const r = a.getBoundingClientRect();
+    if (r.width < 3 || r.height < 3) continue;
+    const cs = getComputedStyle(a);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) < 0.1) continue;
+    const cx = r.x + r.width / 2, cy = r.y + Math.min(r.height / 2, 8);
+    if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
+    const el = document.elementFromPoint(cx, cy);          // csak ami tenyleg latszik es nincs letakarva
+    if (!el || !(el === a || a.contains(el) || el.contains(a))) continue;
+    const href = a.href || '';
+    if (!/^https?:/i.test(href)) continue;
+    out.push([Math.round(r.x + scrollX), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height), href]);
+  }
+  out.sort((p, q) => (p[1] - q[1]) || (p[0] - q[0]));
+  return out.slice(0, 400);
+}"""
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 AO-OS-projector"
 
@@ -35,12 +49,13 @@ class Renderer:
                 url, w, h, y = job
                 if page is None:
                     page = browser.new_page(viewport={"width": w, "height": 768}, user_agent=UA)
-                if page.viewport_size["width"] != w:
-                    page.set_viewport_size({"width": w, "height": 768})
                 if url != cur_url:
-                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    if not url.lower().startswith(("http://", "https://")):
+                        raise ValueError(f"nem http(s) cim: {url[:80]}")
+                    cur_url = None
+                    page.goto(url, wait_until="domcontentloaded", timeout=15000)
                     try:
-                        page.wait_for_load_state("networkidle", timeout=4000)
+                        page.wait_for_load_state("networkidle", timeout=3000)
                     except Exception:
                         pass
                     cur_url = url
@@ -49,13 +64,20 @@ class Renderer:
                     page_h = 768
                 y = max(0, min(y, max(0, page_h - 768)))
                 h = max(768, min(h, page_h - y))
-                png = page.screenshot(clip={"x": 0, "y": y, "width": w, "height": h}, full_page=True, type="png")
+                # a nezet maga lesz w x h, es ugyanebben az elrendezesben keszul a kep es a linklista:
+                # a "teljes oldal" kep ideiglenes atmeretezese mas elrendezest adott, es a keretek elcsusztak
+                if page.viewport_size != {"width": w, "height": h}:
+                    page.set_viewport_size({"width": w, "height": h})
+                page.evaluate(f"window.scrollTo(0, {y})")
+                page.wait_for_timeout(150)
+                y = int(page.evaluate("window.scrollY"))
+                png = page.screenshot(type="png")
+                links = page.evaluate(LINKS_JS)
                 from PIL import Image
                 im = Image.open(io.BytesIO(png)).convert("RGB")
                 if im.size != (w, h):
                     im = im.resize((w, h))
                 rgb = im.tobytes()
-                links = page.evaluate(LINKS_JS)
                 title = page.title() or url
                 reply.put({"w": w, "h": h, "y": y, "page_h": page_h, "title": title, "url": page.url,
                            "links": links, "rgb": rgb})
@@ -85,10 +107,19 @@ def pack(r):
     """(meta szoveg, zlib-adat) a RENDERED kerethez es a FILE 'img' darabokhoz"""
     z = zlib.compress(r["rgb"], 6)
     s = sum(r["rgb"]) & 0xFFFFFFFF
-    lines = [f"w={r['w']}", f"h={r['h']}", f"y={r['y']}", f"page_h={r['page_h']}", f"zlen={len(z)}", f"sum={s}",
-             f"title={r['title'][:180]}", f"url={r['url'][:400]}", f"links={len(r['links'])}"]
+    head = [f"w={r['w']}", f"h={r['h']}", f"y={r['y']}", f"page_h={r['page_h']}", f"zlen={len(z)}", f"sum={s}",
+            f"title={r['title'][:180]}", f"url={r['url'][:400]}"]
+    # a meta egy AOP-keret: a netbook 64 KiB-ig fogad, ezert a linklista legfeljebb ~56 KB
+    links = []
+    size = sum(len(l.encode("utf-8")) + 1 for l in head) + 16
     for x, y, w, h, href in r["links"]:
-        lines.append(f"{x} {y} {w} {h} {href[:400]}")
+        line = f"{x} {y} {w} {h} {href[:300]}"
+        n = len(line.encode("utf-8")) + 1
+        if size + n > 56000:
+            break
+        links.append(line)
+        size += n
+    lines = head + [f"links={len(links)}"] + links
     return "\n".join(lines) + "\n", z
 
 

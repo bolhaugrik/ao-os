@@ -248,6 +248,7 @@ static int do_file(const char *kind, const char *name, const char *path)
     usize hl = kl + nl + 2;
     int fd = ao_open(path, O_READ);
     if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
+    u64 t0 = ao_ticks(), total = 0;
     for (;;) {
         usize n = hl;
         while (n < sizeof fb) {
@@ -258,9 +259,11 @@ static int do_file(const char *kind, const char *name, const char *path)
         if (n == hl) break;
         int e = aop_send(AOP_FILE, fb, n);
         if (e) { ao_printf("agentd: kuldes: %s\n", ao_errstr(e)); ao_close(fd); return 4; }
+        total += n - hl;
         if (n < sizeof fb) break;
     }
     ao_close(fd);
+    if (total > 65536) ao_printf("%s: %lu KiB elkuldve, %lu ms\n", path, total / 1024, (ao_ticks() - t0) * 10);
     memcpy(fb, "done\n", 5);
     memcpy(fb + 5, name, nl); fb[5 + nl] = '\n';
     aop_send(AOP_FILE, fb, 6 + nl);
