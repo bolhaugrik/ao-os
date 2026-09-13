@@ -574,6 +574,14 @@ static bool view_load(const char *url, u32 y)
         if (e) { snformat(message, sizeof message, "fb: %s", ao_errstr(e)); return false; }
         gx_open = true;
     }
+    /* jelzes a felso savban: a hid most renderel (elso alkalommal a Chromium indulasa is bele) */
+    {
+        u32 bg = gfx_rgb(&gx, 90, 60, 20), fg = gfx_rgb(&gx, 255, 230, 160);
+        char msg[600];
+        snformat(msg, sizeof msg, " betoltes a hidrol: %s   (Ctrl+C: megszakitas)", url);
+        gfx_fill(&gx, 0, 0, gx.w, BAR, bg);
+        gfx_text(&gx, 0, 2, 1, fg, bg, msg);
+    }
     char req[640];
     usize n = (usize)snformat(req, sizeof req, "url=%s\nw=%u\nh=%u\ny=%u\n", url, gx.w, gx.h * 3, y);
     int e = aop_send(AOP_RENDER, req, n);

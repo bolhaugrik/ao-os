@@ -515,6 +515,20 @@ int task_wait(u32 pid, int *status)
     }
 }
 
+/* Ctrl+C: minden futo user-task leallitasa (a shell a gyerek rc=-9-et latja) */
+int task_kill_user_all(void)
+{
+    int n = 0;
+    for (int i = 1; i < TASK_MAX; i++) {
+        struct task *t = &tasks[i];
+        if (t->state == T_FREE || t->state == T_ZOMBIE || !t->user || t->killed) continue;
+        t->killed = true;
+        if (t->state == T_BLOCKED) { waitq_remove(t); t->state = T_READY; }
+        n++;
+    }
+    return n;
+}
+
 bool task_kill(u32 pid)
 {
     struct task *t = task_get(pid);

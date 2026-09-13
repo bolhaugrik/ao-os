@@ -74,6 +74,7 @@ NORETURN void task_exit(int code);
 u64  task_sbrk(struct task *t, i64 delta);     /* heap novelese; a regi veg, 0 = nincs memoria/korlat */
 int  task_wait(u32 pid, int *status);          /* blokkol; visszaadja a pid-et vagy hibat */
 bool task_kill(u32 pid);
+int  task_kill_user_all(void);                 /* Ctrl+C: minden user-task megjelolese (IRQ-bol is hivhato) */
 void task_yield(void);
 void task_sleep_ms(u32 ms);
 void task_block_on(struct waitq *q);           /* IF barmilyen; visszateres utan IF=1 */

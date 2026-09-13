@@ -213,6 +213,8 @@ static void kbd_irq(struct regs *r)
         if (c >= 'a' && c <= 'z') code = c - 'a' + 1;
         else if (c >= 'A' && c <= 'Z') code = c - 'A' + 1;
     }
+    if (code == 3)
+        task_kill_user_all();           /* Ctrl+C szoveges modban: a futo program leall, a shell visszajon */
     push(code);
 }
 
