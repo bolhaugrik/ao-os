@@ -24,6 +24,7 @@ static u64 dirty_rows;          /* bit / kepernyo-sor (max 64) */
 static bool all_dirty;
 static u32 palette[16];
 static u32 last_cursor_col = ~0u, last_cursor_row = ~0u;
+static u64 base_seq;            /* a gyuru legregebbi soranak sorszama (boot ota monoton) */
 
 /* ANSI-parser allapot */
 static int esc_state;           /* 0 nincs, 1 ESC, 2 CSI */
@@ -141,6 +142,7 @@ static void newline(void)
         nlines++;
     } else {
         head = (head + 1) % SCROLLBACK_LINES;
+        base_seq++;
     }
     clear_line(line(nlines - 1));
     all_dirty = true;
@@ -274,6 +276,53 @@ void console_scroll_view(int lines)
     else if (lines > 0) view_off = (view_off + (u32)lines > max_off) ? max_off : view_off + (u32)lines;
     else view_off = ((u32)(-lines) > view_off) ? 0 : view_off - (u32)(-lines);
     all_dirty = true;
+}
+
+/* ---------------------------------------------------------------- visszaolvasas */
+/* glyph-index -> Unicode (a glyph_for forditottja) */
+static u32 cp_for(u8 g)
+{
+    if (g < 0x80) return g == 0x7F ? '?' : g;
+    switch (g) {
+    case 0xD5: return 0x150;
+    case 0xF5: return 0x151;
+    case 0xDB: return 0x170;
+    case 0xFB: return 0x171;
+    default: return g;                  /* Latin-1 tartomany */
+    }
+}
+
+static usize cells_to_utf8(const struct cell *l, char *out, usize cap)
+{
+    u32 end = cols;
+    while (end > 0 && l[end - 1].ch == ' ') end--;
+    usize n = 0;
+    for (u32 i = 0; i < end; i++) {
+        u32 cp = cp_for(l[i].ch);
+        if (cp < 0x80) { if (n + 1 >= cap) break; out[n++] = (char)cp; }
+        else if (cp < 0x800) { if (n + 2 >= cap) break; out[n++] = (char)(0xC0 | (cp >> 6)); out[n++] = (char)(0x80 | (cp & 0x3F)); }
+    }
+    out[n] = 0;
+    return n;
+}
+
+u64 console_line_seq(void)
+{
+    return base_seq + nlines - rows + cur_row;
+}
+
+bool console_get_line(u64 seq, char *out, usize cap)
+{
+    if (!ready || !cap || seq < base_seq || seq >= base_seq + nlines) { if (cap) out[0] = 0; return false; }
+    cells_to_utf8(line((u32)(seq - base_seq)), out, cap);
+    return true;
+}
+
+bool console_get_screen_line(u32 row, char *out, usize cap)
+{
+    if (!ready || !cap || row >= rows) { if (cap) out[0] = 0; return false; }
+    cells_to_utf8(screen_line(row), out, cap);
+    return true;
 }
 
 /* egy kepernyo-sor kirajzolasa: 16 pixelsor x cols x 8 pixel, szekvencialis irasokkal */

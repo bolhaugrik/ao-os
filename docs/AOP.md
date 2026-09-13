@@ -53,6 +53,13 @@ Minden szám little-endian.
 | 9 | ERR | híd → OS | hibaszöveg |
 | 10 | PING | bármely | üres |
 | 11 | PONG | bármely | üres |
+| 12 | FILE | OS → híd | `kind\nnév\n` + tartalom; `kind` = `shot` (a híd `shots/` mappájába menti) vagy `clip` (a PC vágólapjára); válasz DELTA + END |
+| 13 | CLIP_GET | OS → híd | üres; a PC vágólapját kéri |
+| 14 | CLIP | híd → OS | a vágólap szövege (UTF-8) |
+
+A 12–14 típusok (AOP 1.2) a `shot`, `copy`, `paste` parancsokat szolgálják: az `agentd` `--file` / `--clip`
+módban, a `clip` manifesttel (`/etc/agents/clip.cap`) küldi őket, a kézfogás és a titkosítás ugyanaz.
+A híd a PING-re a kézfogás előtt is PONG-gal felel: ezzel ellenőrzi a netbook indításkor, hogy a híd elérhető-e.
 
 ## Eszközök (TOOL_CALL nevek)
 

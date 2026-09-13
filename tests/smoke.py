@@ -18,7 +18,13 @@ TEST_PSK = "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0"
 # (parancs, elvart reszlet a kimenetben); a "\n" a parancs vegen extra Entert kuld
 SESSIONS = [
     [   # 1. menet: alap parancsok, taskok, capability, formazas, perzisztens iras, panic
-        ("help", "AO-OS parancsok"),
+        ("help", "Tab = kiegeszites"),
+        ("help copy", "vagolap"),
+        ("hel\t", "Rendszer"),
+        ("cat /boot.t\t", "AO-OS ramdisk"),
+        ("status", "hid"),
+        ("time", ":"),
+        ("date", "-"),
         ("mem", "hasznalhato:"),
         ("cpu", "tsc:"),
         ("disk", "AO-particio"),
@@ -83,10 +89,16 @@ SESSIONS = [
         ("spawn /etc/agent-test.cap captest", "rc=0"),
         ("cat /project/src/a.txt", "nincs ilyen"),
         ("lastpanic", "nincs mentett panic"),
-        ("cat /sys/version", "AO-OS 0.1-phase2"),
+        ("cat /sys/version", "AO-OS 0.2"),
+        ("append /state/rc echo rc-fut-ok", "bajt"),
+        ("append /state/rc kbd hu", "bajt"),
+        ("cat /state/rc", "kbd hu"),
         ("reboot", ""),
     ],
     [   # 4. menet: perzisztencia a telepitett rendszeren + AI-agent a szimulalt hiddal
+        ("", "rc-fut-ok"),              # a boot-kimenetben: az indito szkript lefutott
+        ("", "kiosztas: hu"),
+        ("kbd us", "kiosztas: us"),
         ("cat /state/x.txt", "telepites utan"),
         ("cat /project/README.txt", "agent projekt"),
         ("ls /project/src", "(ures)"),
@@ -109,6 +121,13 @@ SESSIONS = [
         ("rm /project/src/hello.txt", "AO> "),
         ("agent coder titkositott proba", "csatorna: titkositott"),
         ("cat /project/src/hello.txt", "irta az agent"),
+        ("shot proba", "mentve: build/shot-proba.txt"),
+        ("echo masolando szoveg", "masolando szoveg"),
+        ("copy", "vagolapra masolva (1 sor)"),
+        ("copy 3", "vagolapra masolva (3 sor)"),
+        ("paste /tmp/p.txt", "bajt"),
+        ("cat /tmp/p.txt", "echo vagolap-ok"),
+        ("paste", "paste: 16 bajt"),
     ],
 ]
 
@@ -216,7 +235,13 @@ def main():
             print("FAIL  nem jott prompt")
             ok = False
             break
+        boot_out = out
         for c, expect in cmds:
+            if c == "":                                     # ellenorzes a boot-kimeneten
+                found = expect in boot_out
+                print(f"  {'OK ' if found else 'FAIL'}  {'(boot)':40s} -> {expect!r}")
+                ok &= found
+                continue
             s.sendall(c.encode("utf-8") + b"\n")
             out, found = recv_until(s, expect, 20 if c in ("install", "IGEN") else 8)
             log.append(out)

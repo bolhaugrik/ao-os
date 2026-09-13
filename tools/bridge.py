@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -49,7 +50,8 @@ TOOL_DEFS = [
 # ---------------------------------------------------------------- keretezes (tools/aop.py)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, load_psk, default_psk_path,  # noqa: E402
-                 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG)
+                 parse_file, HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG,
+                 FILE, CLIP_GET, CLIP)
 import aocrypto  # noqa: E402
 
 
@@ -215,6 +217,51 @@ def make_backend(provider, model, effort, system):
     return ClaudeBackend(model, effort, system)
 
 
+# ---------------------------------------------------------------- PC-oldali szolgaltatasok (shot, vagolap)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def save_shot(name, text):
+    """A netbook kepernyojenek szovege a shots/ mappaba, idobelyeggel."""
+    import re
+    import time
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:40] or "shot"
+    d = os.path.join(ROOT, "shots")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}-{safe}.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return os.path.relpath(path, ROOT)
+
+
+def clipboard_get():
+    import tkinter
+    r = tkinter.Tk()
+    r.withdraw()
+    try:
+        return r.clipboard_get()
+    except tkinter.TclError:
+        return ""
+    finally:
+        r.destroy()
+
+
+def clipboard_set(text):
+    try:
+        import tkinter
+        r = tkinter.Tk()
+        r.withdraw()
+        r.clipboard_clear()
+        r.clipboard_append(text)
+        r.update()
+        r.destroy()
+    except Exception:
+        if sys.platform != "win32":
+            raise
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+                       input=text.encode("utf-8"), check=True)
+
+
 # ---------------------------------------------------------------- egy kapcsolat
 class Session:
     def __init__(self, sock, addr, provider, model, effort, psk, strict):
@@ -267,6 +314,8 @@ class Session:
                 if ftype is None:
                     break
                 if ftype == HELLO:
+                    self.conn.chan = None                   # uj menet: a kezfogas donti el a titkositast
+                    self.backend = None
                     self.agent, err = server_handshake(self.conn, payload, self.psk, self.model, self.strict)
                     if err:
                         self.log(err)
@@ -285,6 +334,31 @@ class Session:
                         name = type(e).__name__
                         msg = getattr(e, "message", None) or str(e)
                         self.conn.send(ERR, f"{name}: {msg[:300]}")
+                elif ftype == FILE:
+                    kind, name, content = parse_file(payload)
+                    text = content.decode("utf-8", errors="replace")
+                    try:
+                        if kind == "shot":
+                            path = save_shot(name, text)
+                            self.log(f"kepernyokep: {path}")
+                            self.conn.send(DELTA, f"mentve: {path}")
+                        elif kind == "clip":
+                            clipboard_set(text)
+                            n = text.count("\n")
+                            self.log(f"vagolap: {n} sor")
+                            self.conn.send(DELTA, f"vagolapra masolva ({n} sor)")
+                        else:
+                            self.conn.send(ERR, f"ismeretlen fajl-tipus: {kind}")
+                    except Exception as e:  # tkinter/fajl-hiba
+                        self.conn.send(ERR, f"{type(e).__name__}: {e}"[:300])
+                    self.conn.send(END, "stop=file\n")
+                elif ftype == CLIP_GET:
+                    try:
+                        text = clipboard_get()
+                        self.log(f"vagolap lekerve: {len(text)} karakter")
+                        self.conn.send(CLIP, text)
+                    except Exception as e:
+                        self.conn.send(ERR, f"vagolap: {e}"[:300])
                 elif ftype == PING:
                     self.conn.send(PONG)
         except (ConnectionError, OSError) as e:

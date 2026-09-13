@@ -34,8 +34,7 @@
 #include "shell/shell.h"
 #include "lib/fmt.h"
 #include "lib/string.h"
-
-#define AO_VERSION "0.1-phase2"
+#include "version.h"
 
 static void serial_out(char c, void *ctx) { (void)ctx; serial_putc(c); }
 static void sprintf_(const char *fmt, ...)
@@ -81,6 +80,7 @@ static void shell_thread(void *arg)
 static void net_thread(void *arg)
 {
     (void)arg;
+    shell_net_boot(true);
     task_sleep_ms(200);
     int e = dhcp_run(8000);
     char ip[20];
@@ -88,6 +88,10 @@ static void net_thread(void *arg)
     if (e == 0) kprintf("\n[net: dhcp ok, ip %s]\n", ip);
     else kprintf("\n[net: dhcp sikertelen, 'ip' paranccsal allithato]\n");
     console_flush();
+    if (e == 0)
+        shell_probe_bridge();           /* AOP PING a hidnak: elerheto-e */
+    else
+        shell_net_boot(false);
 }
 
 void kmain(struct bootinfo *bi)

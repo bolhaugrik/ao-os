@@ -1,0 +1,3 @@
+# AO-OS indito szkript. A shell soronkent futtatja a prompt elott.
+# A /state/rc (ha letezik) ezt teljesen felulirja; pl.:  append /state/rc kbd hu
+# A '#' sorok megjegyzesek.

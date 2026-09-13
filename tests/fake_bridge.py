@@ -10,8 +10,10 @@ import sys
 import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
-from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake,  # noqa: E402
-                 HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, PING, PONG)
+from aop import (Conn, encode_tool_call, parse_tool_result, server_handshake, parse_file,  # noqa: E402
+                 HELLO, CONTEXT, PROMPT, DELTA, TOOL_RESULT, END, PING, PONG, FILE, CLIP_GET, CLIP)
+
+BUILD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build")
 
 
 def tool_call(conn, tid, name, **kw):
@@ -34,6 +36,7 @@ def handle(sock, addr, psk):
             if ftype is None:
                 break
             if ftype == HELLO:
+                conn.chan = None
                 _agent, err = server_handshake(conn, payload, psk, "fake", strict=False)
                 print(f"{addr[0]}: {'titkositott' if conn.chan else 'titkositatlan'}", flush=True)
                 if err:
@@ -58,6 +61,21 @@ def handle(sock, addr, psk):
                     conn.send(DELTA, "csatorna: titkositott\n")
                 tool_call(conn, "t5", "done", summary="kesz")
                 conn.send(END, "stop=done\n")
+            elif ftype == FILE:
+                kind, name, content = parse_file(payload)
+                text = content.decode("utf-8", errors="replace")
+                if kind == "shot":
+                    path = os.path.join(BUILD, f"shot-{name}.txt")
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    print(f"shot: {path} ({len(text)} karakter)", flush=True)
+                    conn.send(DELTA, f"mentve: build/shot-{name}.txt")
+                else:
+                    print(f"clip: {text!r}", flush=True)
+                    conn.send(DELTA, f"vagolapra masolva ({text.count(chr(10))} sor)")
+                conn.send(END, "stop=file\n")
+            elif ftype == CLIP_GET:
+                conn.send(CLIP, "echo vagolap-ok\n")
             elif ftype == PING:
                 conn.send(PONG)
     except (ConnectionError, OSError) as e:

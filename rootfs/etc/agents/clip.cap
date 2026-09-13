@@ -1,0 +1,11 @@
+# kepernyokep es vagolap a hidon at (shot, copy, paste): csak a /tmp csere-fajlok es a hid
+agent clip
+console
+net       *:9010
+fs.read   /etc/ai/**
+fs.read   /state/ai/**
+fs.read   /tmp/shot.txt
+fs.read   /tmp/clip.txt
+fs.write  /tmp/clip.txt
+mem       4M
+deadline  30s

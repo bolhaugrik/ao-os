@@ -8,7 +8,9 @@
 #include "crypto.h"
 
 #define MAGIC "AOP1"
-enum { F_HELLO = 1, F_HELLO_OK, F_CONTEXT, F_PROMPT, F_DELTA, F_TOOL_CALL, F_TOOL_RESULT, F_END, F_ERR, F_PING, F_PONG };
+enum { F_HELLO = 1, F_HELLO_OK, F_CONTEXT, F_PROMPT, F_DELTA, F_TOOL_CALL, F_TOOL_RESULT, F_END, F_ERR, F_PING, F_PONG,
+       F_FILE, F_CLIP_GET, F_CLIP };
+static bool quiet;      /* --file / --clip mod: csak a hid valaszat irjuk ki */
 #define FLAG_ENC 1
 
 static int sock;
@@ -349,10 +351,68 @@ static usize read_file(const char *path, char *buf, usize cap)
     return got;
 }
 
+/* --file KIND NEV UTVONAL: a fajl a PC-re megy (shot: shots/ mappa, clip: vagolap) */
+static int do_file(const char *kind, const char *name, const char *path)
+{
+    static char fb[48 * 1024];
+    usize kl = strlen(kind), nl = strlen(name);
+    if (kl + nl + 2 > 128) return 1;
+    memcpy(fb, kind, kl); fb[kl] = '\n';
+    memcpy(fb + kl + 1, name, nl); fb[kl + 1 + nl] = '\n';
+    usize hl = kl + nl + 2;
+    int fd = ao_open(path, O_READ);
+    if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
+    usize n = hl;
+    for (;;) {
+        isize r = ao_read(fd, fb + n, sizeof fb - n);
+        if (r <= 0 || n + (usize)r >= sizeof fb) { if (r > 0) n += (usize)r; break; }
+        n += (usize)r;
+    }
+    ao_close(fd);
+    send_frame(F_FILE, fb, n);
+    int rc = 0;
+    for (;;) {
+        u16 type;
+        usize len;
+        int e = recv_frame(&type, &len);
+        if (e) { ao_printf("agentd: kapcsolat: %s\n", ao_errstr(e)); rc = 4; break; }
+        if (type == F_DELTA) { ao_write(1, payload, len); ao_puts("\n"); }
+        else if (type == F_END) break;
+        else if (type == F_ERR) { ao_printf("[hid hiba: %s]\n", (char *)payload); rc = 5; break; }
+        else if (type == F_PING) send_frame(F_PONG, NULL, 0);
+    }
+    return rc;
+}
+
+/* --clip UTVONAL: a PC vagolapja a fajlba */
+static int do_clip(const char *path)
+{
+    send_frame(F_CLIP_GET, NULL, 0);
+    for (;;) {
+        u16 type;
+        usize len;
+        int e = recv_frame(&type, &len);
+        if (e) { ao_printf("agentd: kapcsolat: %s\n", ao_errstr(e)); return 4; }
+        if (type == F_CLIP) {
+            int fd = ao_open(path, O_WRITE | O_CREATE | O_TRUNC);
+            if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
+            ao_write(fd, payload, len);
+            ao_close(fd);
+            return 0;
+        }
+        if (type == F_ERR) { ao_printf("[hid hiba: %s]\n", (char *)payload); return 5; }
+        if (type == F_PING) send_frame(F_PONG, NULL, 0);
+    }
+}
+
 int main(int argc, char **argv)
 {
     static char caps[1024], ctx[8192], addr[64], task[1024];
     if (argc < 2) { ao_puts("agentd: feladat szovege kell\n"); return 1; }
+    bool mode_file = strcmp(argv[1], "--file") == 0, mode_clip = strcmp(argv[1], "--clip") == 0;
+    if (mode_file && argc < 5) { ao_puts("agentd --file KIND NEV UTVONAL\n"); return 1; }
+    if (mode_clip && argc < 3) { ao_puts("agentd --clip UTVONAL\n"); return 1; }
+    quiet = mode_file || mode_clip;
     usize tl = 0;
     for (int i = 1; i < argc && tl + strlen(argv[i]) + 2 < sizeof task; i++) {
         usize l = strlen(argv[i]);
@@ -380,7 +440,7 @@ int main(int argc, char **argv)
     if (read_file("/state/ai/psk", pskhex, sizeof pskhex) >= 64 && parse_hex(pskhex, psk, 32))
         have_psk = true;
 
-    ao_printf("[agent %s -> hid %s%s]\n", agent_name, addr, have_psk ? ", PSK" : "");
+    if (!quiet) ao_printf("[agent %s -> hid %s%s]\n", agent_name, addr, have_psk ? ", PSK" : "");
     sock = ao_net_connect(addr);
     if (sock < 0) { ao_printf("agentd: kapcsolodas: %s\n", ao_errstr(sock)); return 3; }
 
@@ -423,10 +483,15 @@ int main(int argc, char **argv)
             }
             aochan_init(&chan, psk, cnonce, snonce, false);
             enc = true;
-            ao_printf("[hid: %s, titkositott csatorna]\n", (char *)payload);
-        } else {
+            if (!quiet) ao_printf("[hid: %s, titkositott csatorna]\n", (char *)payload);
+        } else if (!quiet) {
             ao_printf("[hid: %s]\n", (char *)payload);
         }
+    }
+    if (mode_file || mode_clip) {
+        int rc = mode_file ? do_file(argv[2], argv[3], argv[4]) : do_clip(argv[2]);
+        ao_close(sock);
+        return rc;
     }
 
     /* kontextus: capability-lista + mentett kontextus */

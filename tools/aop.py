@@ -10,6 +10,13 @@ import aocrypto  # noqa: E402
 
 MAGIC = b"AOP1"
 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
+FILE, CLIP_GET, CLIP = 12, 13, 14      # AOP 1.2: fajl a PC-re (shot/clip), PC-vagolap lekerese/valasza
+
+
+def parse_file(payload):
+    """FILE keret: 'kind\\nname\\n' + tartalom (bajtok) -> (kind, name, content)"""
+    kind, name, rest = payload.split(b"\n", 2)
+    return kind.decode(errors="replace"), name.decode(errors="replace"), rest
 FLAG_ENC = 1
 
 
@@ -56,8 +63,10 @@ class Conn:
             payload = self.chan.open(hdr, payload)
             if payload is None:
                 return None, None
-        elif self.chan is not None and ftype != ERR:
+        elif self.chan is not None and ftype not in (ERR, HELLO):
             return None, None
+        # nyilt HELLO titkositott csatornan: uj menet ugyanazon a TCP-folyamon (QEMU guestfwd
+        # minden vendeg-kapcsolatot egy host-kapcsolatra fuz); a kezfogas ujra PSK-t kovetel
         return ftype, payload
 
     def close(self):

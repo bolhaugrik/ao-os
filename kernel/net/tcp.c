@@ -212,6 +212,12 @@ int tcp_connect(u32 ip, u16 port, u32 timeout_ms)
     int id = -1;
     for (int i = 0; i < TCP_SOCKS; i++)
         if (socks[i].state == T_CLOSED) { id = i; break; }
+    if (id < 0) {
+        /* nincs szabad hely: a legregebben lezart TIME_WAIT-es ujrahasznalhato (uj helyi port) */
+        u64 oldest = ~0ULL;
+        for (int i = 0; i < TCP_SOCKS; i++)
+            if (socks[i].state == T_TIME_WAIT && socks[i].last_activity < oldest) { oldest = socks[i].last_activity; id = i; }
+    }
     if (id < 0) return E_LIMIT;
     struct sock *s = &socks[id];
     if (s->rx) kfree(s->rx);

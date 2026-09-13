@@ -64,8 +64,12 @@ python tools\bridge.py [--provider claude|gemini] [--model ...] [--effort low|me
 ```
 
 A netbookon `/state/ai/bridge` a híd címe (`ip:port`), `/state/ai/psk` a kulcs. Parancsok:
-`ai <kérdés>` (egyszeri beszélgetés), `agent coder <feladat>` (a `coder` manifest jogaival dolgozik).
+`ai <kérdés>` (egyszeri beszélgetés), `agent coder <feladat>` (a `coder` manifest jogaival dolgozik),
+`shot` (a képernyő szövege a PC `shots/` mappájába), `copy` / `paste` (a PC vágólapja mindkét irányba).
 A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`.
+
+Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
+`time`, `date` és a `set` alparancsuk a CMOS órát kezeli; `status` az állapot-összefoglaló; Tab kiegészít.
 
 ## Elrendezés
 

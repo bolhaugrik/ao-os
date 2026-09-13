@@ -24,3 +24,9 @@ u32  console_rows(void);
 void console_get_cursor(u32 *col, u32 *row);
 void console_set_col(u32 col);        /* kurzor oszlopa az aktualis sorban */
 void console_set_serial_mirror(bool on);
+
+/* Sorok visszaolvasasa (copy, shot). A sorszam monoton no a boot ota; a gyurubol mar
+ * kiesett sor false-t ad. A szoveg UTF-8, zaro szokozok nelkul. */
+u64  console_line_seq(void);                                  /* a kurzor soranak sorszama */
+bool console_get_line(u64 seq, char *out, usize cap);
+bool console_get_screen_line(u32 row, char *out, usize cap);  /* a lathato kepernyo r. sora */

@@ -4,3 +4,4 @@ rootfs/boot/
 *.img
 *.log
 __pycache__/
+shots/
