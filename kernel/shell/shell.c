@@ -91,7 +91,8 @@ static const struct cmd cmds[] = {
     { "ping nc",         "CIM [PORT [SZOVEG]]",  "ICMP ping; TCP proba", 4 },
     { "netbench",        "CIM PORT [MB]",        "nyers TCP-kuldes merese (PC-n: python tests\\sink.py PORT)", 4 },
     { "disk",            "",                     "tarolo-vezerlok, lemez, particio", 5 },
-    { "install update",  "",                     "telepites a belso lemezre; frissites (/state marad)", 5 },
+    { "install",         "",                     "teljes telepites a belso lemezre (pendrive-rol indulva)", 5 },
+    { "update",          "[net|rd|force]",       "frissites a hidrol (PC: python ao.py build) vagy a ramdiskbol; /state marad", 5 },
     { "mkfs sync",       "",                     "particio formazasa; irasok kiirasa", 5 },
     { "lastpanic",       "[clear]",              "az utolso panic a lemezrol", 5 },
     { "2048",            "",                     "a jatek: nyilak, r uj jatek, q kilep (legjobb: /state/games)", 6 },
@@ -550,6 +551,9 @@ static void splash(void)
     console_set_color(CON_BYELLOW, CON_BLACK);
     kprintf("  AO-OS " AO_VERSION);
     console_set_color(CON_BBLACK, CON_BLACK);
+    char build[64];
+    disk_running_build(build, sizeof build);
+    if (build[0]) kprintf("  build %s", build);
     kprintf("   sajat kernelu AI-terminal   ");
     console_set_color(CON_DEFAULT_FG, CON_BLACK);
     kprintf("Aspire One 725\n");
@@ -776,15 +780,68 @@ static void cmd_netbench(int argc, char **argv)
             after.zero_wnd - before.zero_wnd, after.wnd_limited - before.wnd_limited, after.min_wnd == 0xFFFFFFFFu ? 0 : after.min_wnd);
 }
 
-static void cmd_update(void)
+static void cmd_reboot(void);
+static void cmd_agent(const char *name, const char *prog, int argc, char **argv, int first);
+
+/* update [net|rd|force]: a belso lemez boot-terulete + programok frissitese, a /state marad.
+ *   net   a PC share/boot.img-je a hidon at (alap, ha a gep a lemezrol indult es van hid-cim)
+ *   rd    a most futo ramdiskbol (pendrive-os frissites; IGEN-t ker)
+ *   force halozati, akkor is, ha ugyanaz a build fut */
+static void cmd_update(int argc, char **argv)
 {
+    const char *mode = argc > 1 ? argv[1] : "";
+    bool force = !strcmp(mode, "force");
+    bool want_rd = !strcmp(mode, "rd");
+    bool want_net = force || !strcmp(mode, "net");
     if (!blk_present()) { kprintf("update: nincs lemez\n"); return; }
-    kprintf("update: a bootloader, a kernel es a programok frissulnek a belso lemezen, a /state megmarad. Folytatas: IGEN\n");
-    char line[LINE_MAX];
-    read_line("> ", line);
-    if (strcmp(line, "IGEN") != 0) { kprintf("megszakitva\n"); return; }
-    int e = disk_update();
-    if (e) kprintf("update: hiba: %s\n", errstr(e));
+    if (mode[0] && !want_rd && !want_net) { kprintf("update [net|rd|force]\n"); return; }
+    char addr[64];
+    bool have_bridge = bridge_addr(addr, sizeof addr);
+    bool net = want_net || (!want_rd && have_bridge && disk_booted_from_disk());
+    if (!net) {
+        kprintf("update: a bootloader, a kernel es a programok frissulnek a belso lemezen a ramdiskbol, a /state megmarad. Folytatas: IGEN\n");
+        char line[LINE_MAX];
+        read_line("> ", line);
+        if (strcmp(line, "IGEN") != 0) { kprintf("megszakitva\n"); return; }
+        int e = disk_update();
+        if (e) kprintf("update: hiba: %s\n", errstr(e));
+        return;
+    }
+    if (!have_bridge) { kprintf("update: nincs hid-cim (write /state/ai/bridge IP:PORT), vagy: update rd\n"); return; }
+    char cur[64], stamp[64];
+    disk_running_build(cur, sizeof cur);
+    kprintf("update: boot.img a hidrol (%s)...\n", addr);
+    console_flush();
+    vfs_mkdir("/state/inbox");
+    vfs_unlink("/state/inbox/boot.img");
+    char *args[] = { "fetch", "--fetch", "boot.img", "/state/inbox/boot.img" };
+    quiet_run = true;
+    cmd_agent("fetch", "agentd", 4, args, 1);
+    quiet_run = false;
+    void *img;
+    usize n;
+    if (vfs_read_all("/state/inbox/boot.img", &img, &n)) {
+        kprintf("update: nem jott meg a boot.img (fut a hid? a PC-n: python ao.py build)\n");
+        return;
+    }
+    disk_image_stamp(img, n, stamp, sizeof stamp);
+    if (!force && cur[0] && !strcmp(cur, stamp)) {
+        kprintf("update: mar ez a build fut (%s); update force = megis\n", stamp);
+        kfree(img);
+        vfs_unlink("/state/inbox/boot.img");
+        return;
+    }
+    kprintf("update: %s -> %s\n", cur[0] ? cur : "(nincs belyeg)", stamp[0] ? stamp : "(nincs belyeg)");
+    console_flush();
+    int e = disk_update_image(img, n);
+    kfree(img);
+    vfs_unlink("/state/inbox/boot.img");
+    vfs_sync();
+    if (e) { kprintf("update: hiba: %s (a pendrive-os install/update tovabbra is mukodik)\n", errstr(e)); return; }
+    kprintf("update: kesz, a programok az elso indulaskor frissulnek; ujrainditas 3 mp mulva...\n");
+    console_flush();
+    task_sleep_ms(3000);
+    cmd_reboot();
 }
 
 static void cmd_lastpanic(bool clear)
@@ -1274,7 +1331,7 @@ static void execute(char *line)
     else if (!strcmp(c, "netbench")) cmd_netbench(argc, argv);
     else if (!strcmp(c, "install")) cmd_install(false);
     else if (!strcmp(c, "mkfs")) cmd_install(true);
-    else if (!strcmp(c, "update")) cmd_update();
+    else if (!strcmp(c, "update")) cmd_update(argc, argv);
     else if (!strcmp(c, "sync")) { int e = vfs_sync(); kprintf(e ? "sync: %s\n" : "sync: ok\n", errstr(e)); }
     else if (!strcmp(c, "lastpanic")) cmd_lastpanic(argc > 1 && !strcmp(argv[1], "clear"));
     else if (!strcmp(c, "poweroff")) cmd_poweroff();
@@ -1320,6 +1377,7 @@ void shell_run(const struct bootinfo *bi)
     char line[LINE_MAX];
     boot_to_prompt_us = tsc_to_us(rdtsc() - bi->boot_tsc);
     build_cmd_names();
+    disk_sync_from_ramdisk();       /* halozati update utan az elso boot: bin/, etc/ a friss ramdiskbol */
     splash();
     run_rc();
     for (;;) {

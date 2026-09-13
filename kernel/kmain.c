@@ -152,6 +152,8 @@ void kmain(struct bootinfo *bi)
         kprintf("ahci: port %u, %s, %lu MiB\n", ahci_port_index(), blk_model(), blk_sectors() / 2048);
         int e = disk_mount_root();
         if (e) kprintf("lemez: nincs AO-particio vagy AOFS v2 (install / mkfs)\n");
+        /* a bin/, etc/ frissitese a ramdiskbol (halozati update utan) a shell szalaban tortenik:
+         * a 16 KiB-os boot-verem keves a rekurziv masolashoz */
     } else {
         kprintf("ahci: nincs hasznalhato lemez (%s)\n", ahci_error());
     }

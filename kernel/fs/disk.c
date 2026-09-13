@@ -62,7 +62,7 @@ static int rd_read(const char *p, void **buf, usize *size)
     return vfs_read_all(path, buf, size);
 }
 
-static int copy_tree(const char *src_dir, const char *dst_dir)
+static int copy_tree(const char *src_dir, const char *dst_dir, bool quiet)
 {
     struct dirent *ents = kmalloc(64 * sizeof *ents);
     int n = vfs_list(src_dir, ents, 64);
@@ -76,7 +76,7 @@ static int copy_tree(const char *src_dir, const char *dst_dir)
                 continue;
             int e = vfs_mkdir(d);
             if (e && e != E_EXIST) { kfree(ents); return e; }
-            e = copy_tree(s, d);
+            e = copy_tree(s, d, quiet);
             if (e) { kfree(ents); return e; }
         } else {
             void *buf;
@@ -86,10 +86,130 @@ static int copy_tree(const char *src_dir, const char *dst_dir)
             e = vfs_write_all(d, buf, size);
             kfree(buf);
             if (e) { kfree(ents); return e; }
-            kprintf("  %s (%lu B)\n", d, (u64)size);
+            if (!quiet) kprintf("  %s (%lu B)\n", d, (u64)size);
         }
     }
     kfree(ents);
+    return 0;
+}
+
+/* ---------------------------------------------------------------- build-belyeg */
+#define STAMP_OFF ((u64)64 * 512 - 64)      /* a stage2-terulet utolso 64 bajtja (tools/mkimage.py) */
+#define STAMP_MAX 64
+
+/* egy szovegfajl elso sora (ures, ha nincs) */
+static void read_first_line(const char *path, char *out, usize cap)
+{
+    out[0] = 0;
+    void *b;
+    usize n;
+    if (vfs_read_all(path, &b, &n)) return;
+    const char *p = b;
+    usize l = 0;
+    while (l < n && l + 1 < cap && p[l] != '\n' && p[l] != '\r') { out[l] = p[l]; l++; }
+    out[l] = 0;
+    kfree(b);
+}
+
+void disk_running_build(char *out, usize cap)
+{
+    /* a ramdisk /rd alatt van, ha a lemez a gyoker; kulonben o maga a gyoker */
+    read_first_line("/rd/etc/build", out, cap);
+    if (!out[0] && !aofs_mounted()) return;
+    if (!out[0]) read_first_line("/etc/build", out, cap);
+}
+
+void disk_image_stamp(const void *img, usize n, char *out, usize cap)
+{
+    out[0] = 0;
+    if (n < STAMP_OFF + STAMP_MAX) return;
+    const char *p = (const char *)img + STAMP_OFF;
+    usize l = 0;
+    while (l < STAMP_MAX && l + 1 < cap && p[l] >= ' ' && p[l] < 127) { out[l] = p[l]; l++; }
+    out[l] = 0;
+}
+
+bool disk_booted_from_disk(void)
+{
+    if (!blk_present() || !boot_info->ramdisk_size) return false;
+    u8 sec[512];
+    if (blk_read(1, 1, sec) || memcmp(sec + 4, "AOS2", 4) != 0) return false;
+    u32 hdr[4];
+    memcpy(hdr, sec + 8, sizeof hdr);
+    u32 r_lba = hdr[2], r_sect = hdr[3];
+    if (!r_sect || r_sect != (boot_info->ramdisk_size + 511) / 512) return false;
+    const u8 *rd = P2V(boot_info->ramdisk_paddr);
+    if (blk_read(r_lba, 1, sec) || memcmp(sec, rd, 512) != 0) return false;
+    u8 last[512];
+    memset(last, 0, sizeof last);
+    usize off = (usize)(r_sect - 1) * 512;
+    memcpy(last, rd + off, boot_info->ramdisk_size - off);
+    return blk_read(r_lba + r_sect - 1, 1, sec) == 0 && memcmp(sec, last, 512) == 0;
+}
+
+/* Boot utan, ha a lemez a gyoker: a ramdisk build-belyege mas, mint a lemez /etc/build-je -> a bin/ es etc/
+ * frissul a ramdiskbol (a halozati update igy juttatja a programokat a lemezre). Csak akkor, ha a lemez
+ * boot-terulete ezt a ramdiskt tartalmazza: egy regi pendrive-rol indulva nem irjuk felul a lemezt. */
+void disk_sync_from_ramdisk(void)
+{
+    char rd[STAMP_MAX], dk[STAMP_MAX];
+    read_first_line("/rd/etc/build", rd, sizeof rd);
+    read_first_line("/etc/build", dk, sizeof dk);
+    if (!rd[0] || strcmp(rd, dk) == 0) return;
+    if (!disk_booted_from_disk()) {
+        kprintf("lemez: mas build fut (%s), a lemezen %s; nem a lemezrol indult, a programok maradnak (update)\n",
+                rd, dk[0] ? dk : "nincs belyeg");
+        return;
+    }
+    kprintf("lemez: frissites a ramdiskbol: %s -> %s\n", dk[0] ? dk : "nincs belyeg", rd);
+    int e = copy_tree("/rd", "/", true);
+    vfs_sync();
+    if (e) kprintf("lemez: a frissites megszakadt (hiba %d); update rd a pendrive-rol\n", e);
+    else kprintf("[frissitve: bin/ es etc/ a ramdiskbol, build %s]\n", rd);
+}
+
+/* ---------------------------------------------------------------- halozati frissites */
+int disk_update_image(const void *img, usize n)
+{
+    if (!blk_present()) return E_IO;
+    const u8 *p = img;
+    if (n < 65 * 512 || n > (usize)PANIC_LBA * 512 || (n & 511)) { kprintf("update: rossz kepmeret (%lu B)\n", (u64)n); return E_INVAL; }
+    if (p[510] != 0x55 || p[511] != 0xAA || memcmp(p + 512 + 4, "AOS2", 4) != 0) { kprintf("update: nem AO-boot-kep\n"); return E_INVAL; }
+    u32 hdr[4];
+    memcpy(hdr, p + 512 + 8, sizeof hdr);
+    u32 k_lba = hdr[0], k_sect = hdr[1], r_lba = hdr[2], r_sect = hdr[3];
+    u32 end = r_sect ? r_lba + r_sect : k_lba + k_sect;
+    if (k_lba != 64 || !k_sect || (r_sect && r_lba != 64 + k_sect) || end > n / 512 || end >= PANIC_LBA) {
+        kprintf("update: rossz fejlec (kernel %u+%u, ramdisk %u+%u)\n", k_lba, k_sect, r_lba, r_sect);
+        return E_INVAL;
+    }
+    if (r_sect) {
+        const struct aofs_super *sb = (const struct aofs_super *)(p + (u64)r_lba * 512);
+        if (sb->magic != AOFS_MAGIC || sb->version != 1 || sb->total_size > r_sect * 512) { kprintf("update: rossz ramdisk a kepben\n"); return E_INVAL; }
+    }
+    u64 ps, pn;
+    if (!disk_find_partition(&ps, &pn)) { kprintf("update: nincs AO-particio, hasznald az install-t\n"); return E_NOENT; }
+    u8 mbr[512];
+    if (blk_read(0, 1, mbr)) return E_IO;
+    memcpy(mbr, p, 0x1BE);                  /* uj boot-kod, a lemez sajat particios tablaja marad */
+    vfs_sync();
+
+    /* 1. kernel + ramdisk, darabonkent, visszaolvasva; 2. stage2; 3. legvegul az MBR */
+    kprintf("update: kernel (%u szektor) + ramdisk (%u szektor) irasa...\n", k_sect, r_sect);
+    u8 *chk = kmalloc(128 * 512);
+    int e = 0;
+    for (u32 lba = 64; lba < end && !e; lba += 128) {
+        u32 cnt = end - lba > 128 ? 128 : end - lba;
+        const u8 *src = p + (u64)lba * 512;
+        if ((e = blk_write(lba, cnt, src))) break;
+        if ((e = blk_read(lba, cnt, chk))) break;
+        if (memcmp(chk, src, (usize)cnt * 512) != 0) { kprintf("update: visszaolvasasi hiba LBA %u-nal\n", lba); e = E_IO; }
+    }
+    kfree(chk);
+    if (e) return e;
+    if ((e = blk_write(1, 63, p + 512))) return e;
+    if ((e = blk_write(0, 1, mbr))) return e;
+    blk_flush();
     return 0;
 }
 
@@ -154,6 +274,11 @@ int disk_install_ex(const char *label, bool keep_fs)
     memcpy(st2, s2, s2n);
     u32 *hdr = (u32 *)(st2 + 8);
     hdr[0] = 64; hdr[1] = k_sect; hdr[2] = r_sect ? r_lba : 0; hdr[3] = r_sect;
+    {   /* build-belyeg a stage2-terulet vegere (mint a mkimage-nel), a ramdisk /etc/build-jebol */
+        char stamp[STAMP_MAX];
+        disk_running_build(stamp, sizeof stamp);
+        memcpy(st2 + STAMP_OFF - 512, stamp, strlen(stamp));
+    }
 
     /* 3. MBR: particios tabla */
     u8 mbr[512];
@@ -189,7 +314,7 @@ int disk_install_ex(const char *label, bool keep_fs)
         e = disk_mount_root();
         if (e) goto out;
     }
-    e = copy_tree("/rd", "/");
+    e = copy_tree("/rd", "/", false);
     if (e) goto out;
     vfs_mkdir("/state");
     vfs_mkdir("/state/agents");

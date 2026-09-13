@@ -184,16 +184,42 @@ def build():
     os.makedirs(os.path.join(ROOT, "rootfs", "boot"), exist_ok=True)
     for f in ("stage1.bin", "stage2.bin", "kernel.bin"):
         shutil.copyfile(b(f), os.path.join(ROOT, "rootfs", "boot", f))
+    # build-belyeg: a kernel boot-kor ebbol latja, hogy a lemezen levo bin/ es etc/ elavult-e
+    stamp = build_stamp()
+    with open(os.path.join(ROOT, "rootfs", "etc", "build"), "w", encoding="ascii", newline="\n") as f:
+        f.write(stamp + "\n")
     run([sys.executable, "tools/mkaofs.py", "rootfs", "-o", b("ramdisk.aofs")])
 
     print("[image]")
     cmd = [sys.executable, "tools/mkimage.py", "--stage1", b("stage1.bin"), "--stage2", b("stage2.bin"),
-           "--kernel", b("kernel.bin"), "--ramdisk", b("ramdisk.aofs"), "-o", b("ao.img")]
+           "--kernel", b("kernel.bin"), "--ramdisk", b("ramdisk.aofs"), "--stamp", stamp, "-o", b("ao.img")]
     run(cmd)
+    # a boot-terulet (elso 1 MiB: MBR, stage2, kernel, ramdisk) a share/ mappaba: a netbook
+    # 'update' parancsa a hidon at ezt huzza le es irja a lemezere, pendrive nelkul
+    with open(b("ao.img"), "rb") as f:
+        boot_area = f.read(BOOT_AREA_SECTORS * 512)
+    with open(os.path.join(ROOT, "share", "boot.img"), "wb") as f:
+        f.write(boot_area)
 
     ksize = os.path.getsize(b("kernel.bin"))
     print(f"kernel.bin: {ksize} B   stage2.bin: {os.path.getsize(b('stage2.bin'))} B   "
-          f"ramdisk: {os.path.getsize(b('ramdisk.aofs'))} B   ao.img: {os.path.getsize(b('ao.img')) // 1024} KiB")
+          f"ramdisk: {os.path.getsize(b('ramdisk.aofs'))} B   ao.img: {os.path.getsize(b('ao.img')) // 1024} KiB   "
+          f"build: {stamp}")
+
+
+BOOT_AREA_SECTORS = 2047        # LBA 0..2046; a 2047 a panic-tarolo, a 2048-tol a particio
+
+
+def build_stamp():
+    """'2026-09-13 21:10 fe6df1e' alaku belyeg: datum + a git HEAD rovid hash-e (vagy 'nogit')."""
+    try:
+        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+                           check=True).stdout.strip()
+        if subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout.strip():
+            h += "+"        # nem commitolt valtozasokkal
+    except Exception:
+        h = "nogit"
+    return time.strftime("%Y-%m-%d %H:%M ") + h
 
 
 def qemu_cmd(t, extra):

@@ -61,8 +61,12 @@ python tests/smoke.py                 fej nélküli QEMU-teszt, 4 boot-menet, sz
 python ao.py usb \\.\PhysicalDriveN   pendrive-ra írás (a teljes eszközt felülírja!)
 ```
 
-Netbookon: pendrive-ról boot, `install` (teljes telepítés a belső lemezre) vagy `update`
-(rendszerfrissítés, a `/state` és a `/project` megmarad). `help` a parancsokhoz.
+Netbookon először: pendrive-ról boot, `install` (teljes telepítés a belső lemezre). Utána a napi kör
+pendrive nélkül: a PC-n `python ao.py build` (a hídnak futnia kell), a netbookon `update`. A netbook a
+hídon át lehúzza a boot-területet (`share/boot.img`, 1 MiB), ellenőrzi, a lemezre írja és újraindul;
+az első induláskor a kernel a friss ramdiskből másolja át a programokat. A `/state` és a `/project`
+megmarad. `update rd` a régi, pendrive-os út, `update force` akkor is frissít, ha ugyanaz a build fut.
+A build bélyege (dátum + git hash) a splash fejlécében látszik. `help` a parancsokhoz.
 
 ## AI-híd
 

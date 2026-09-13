@@ -15,6 +15,18 @@ import ao  # noqa: E402
 PORT = 4499
 TEST_PSK = "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0"
 
+
+def _build_stamp():
+    """a build belyege (rootfs/etc/build, az ao.py build irja); a halozati update tesztje ezt varja vissza"""
+    try:
+        with open(os.path.join(ROOT, "rootfs", "etc", "build"), encoding="ascii") as f:
+            return f.readline().strip()
+    except OSError:
+        return "?"
+
+
+BUILD_STAMP = _build_stamp()
+
 # (parancs, elvart reszlet a kimenetben); a "\n" a parancs vegen extra Entert kuld
 SESSIONS = [
     [   # 1. menet: alap parancsok, taskok, capability, formazas, perzisztens iras, panic
@@ -120,7 +132,7 @@ SESSIONS = [
         ("cat /state/agents/coder/context.txt", "## feladat"),
         ("audit", "fs.write  ELUTASITVA  /project/Makefile"),
         ("ai szia", "[kesz: kesz]"),
-        ("update", "IGEN"),
+        ("update rd", "IGEN"),                # pendrive-os ut: a futo ramdiskbol
         ("IGEN", "update: kesz"),
         ("cat /state/x.txt", "telepites utan"),
         ("cat /project/src/hello.txt", "irta az agent"),
@@ -166,6 +178,19 @@ SESSIONS = [
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
         ("cat /state/games/2048", "AO> "),
+        # halozati update: a share/boot.img a szimulalt hidrol; ugyanaz a build -> nem ir; force -> ir es ujraindit
+        ("write /etc/build regi-build", "bajt"),
+        ("update", "mar ez a build fut"),
+        ("update force", "ujrainditas 3 mp"),
+    ],
+    [   # 5. menet: a halozati update utan az elso boot a ramdiskbol frissiti a bin/-t es etc/-t
+        ("", "[frissitve: bin/ es etc/ a ramdiskbol"),
+        ("", "build " + BUILD_STAMP),
+        ("cat /etc/build", BUILD_STAMP),
+        ("cat /state/x.txt", "telepites utan"),
+        ("ls /state/inbox", "szoveg.txt"),
+        ("run hello\n", "rc=0"),
+        ("update", "mar ez a build fut"),
     ],
 ]
 
@@ -281,7 +306,7 @@ def main():
                 ok &= found
                 continue
             s.sendall(c.encode("utf-8") + b"\n")
-            out, found = recv_until(s, expect, 90 if c.startswith(("install", "IGEN", "fetch", "shot /")) else 8)
+            out, found = recv_until(s, expect, 90 if c.startswith(("install", "IGEN", "fetch", "shot /", "update")) else 8)
             log.append(out)
             if expect not in ("", "IGEN", "AO> "):
                 rest, _ = recv_until(s, "AO> ", 3)

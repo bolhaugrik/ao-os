@@ -10,6 +10,8 @@ Elrendezes (LBA, 512 bajtos szektor):
 
 A stage2 fejleceben ('AOS2' utan) a kernel es ramdisk LBA/szektorszam kerul
 felulirasra, a stage1 particios tablajaban a particio kezdete es merete.
+A stage2 teruletenek utolso 64 bajtja (a 63. szektor vege) a build-belyeg
+(--stamp), a netbook 'update' parancsa ebbol latja, mi jon a hidrol.
 """
 import argparse
 import struct
@@ -38,6 +40,7 @@ def main():
     ap.add_argument("--ramdisk")
     ap.add_argument("--fs", help="AOFS particio-kep (opcionalis)")
     ap.add_argument("--size-mib", type=int, default=8, help="teljes kep merete MiB-ban (min.)")
+    ap.add_argument("--stamp", default="", help="build-belyeg (max 63 ASCII karakter)")
     ap.add_argument("-o", "--output", required=True)
     a = ap.parse_args()
 
@@ -72,6 +75,10 @@ def main():
     # stage2 fejlec: kernel_lba, kernel_sectors, ramdisk_lba, ramdisk_sectors
     stage2 = bytearray(pad(stage2, STAGE2_MAX_SECTORS * SECTOR))
     struct.pack_into("<IIII", stage2, 8, KERNEL_LBA, k_sect, r_lba if r_sect else 0, r_sect)
+    stamp = a.stamp.encode("ascii", errors="replace")[:63]
+    if len(stage2.rstrip(b"\0")) > len(stage2) - 64:
+        sys.exit("stage2: nincs hely a build-belyegnek az utolso 64 bajtban")
+    stage2[len(stage2) - 64:] = pad(stamp, 64)
 
     # stage1 particios tabla, 1. bejegyzes: LBA kezdet (+8), meret (+12)
     stage1 = bytearray(stage1)
