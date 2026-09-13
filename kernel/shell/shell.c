@@ -20,6 +20,7 @@
 #include "../drv/ahci.h"
 #include "../drv/acpi.h"
 #include "../drv/rtc.h"
+#include "../drv/screenshot.h"
 #include "version.h"
 #include "../net/net.h"
 #include "../net/tcp.h"
@@ -80,7 +81,8 @@ static const struct cmd cmds[] = {
     { "ai",              "KERDES",               "egyszeri kerdes az AI-nak (chat agent)", 3 },
     { "agent",           "NEV FELADAT",          "agent a NEV.cap manifesttel (/state/agents, /etc/agents)", 3 },
     { "projector",       "CIM | KERDES",         "weboldal vagy kereses lenyomata a teljes kepernyon (--dump: szoveg)", 3 },
-    { "shot",            "[NEV]",                "a kepernyo szovege a PC-re (a hid shots/ mappajaba)", 3 },
+    { "shot",            "[NEV | /FAJL]",        "a kepernyo szovege, vagy egy fajl a PC-re (a hid shots/ mappajaba)", 3 },
+    { "screenshot",      "",                     "pixel-pontos kep a /state/shots/N.ppm fajlba (F12 barhol, Doomban is)", 3 },
     { "copy",            "[N]",                  "az utolso parancs kimenete (vagy N sor) a PC vagolapjara", 3 },
     { "paste",           "[FAJL]",               "a PC vagolapja a parancssorba vagy fajlba", 3 },
     { "fetch",           "NEV [CEL]",            "fajl a PC share/ mappajabol (alap: /state/inbox/NEV)", 3 },
@@ -971,6 +973,17 @@ static void run_clip_agent(int argc, char **argv)
 
 static void cmd_shot(const char *name)
 {
+    /* shot /utvonal: egy fajl (pl. /state/shots/1.ppm) a PC-re, a neve marad */
+    if (name && name[0] == '/') {
+        char path[VFS_PATH_MAX];
+        struct stat st;
+        if (!canon(name, path) || vfs_stat(path, &st) != 0 || st.type != 1) { kprintf("shot: nincs ilyen fajl: %s\n", name); return; }
+        const char *base = path;
+        for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
+        char *args[] = { "shot", "--file", "shot", (char *)base, path };
+        run_clip_agent(5, args);
+        return;
+    }
     u32 rows = console_rows(), cols = console_cols();
     usize cap = (usize)rows * (cols * 3 + 2) + 1;
     char *buf = kmalloc(cap);
@@ -1170,6 +1183,7 @@ static void execute(char *line)
     else if (!strcmp(c, "date")) cmd_date(argc, argv);
     else if (!strcmp(c, "append")) { if (argc > 2) cmd_append(argc, argv); else kprintf("append FAJL SZOVEG...\n"); }
     else if (!strcmp(c, "shot")) cmd_shot(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "screenshot")) { screenshot_request(); task_sleep_ms(50); }
     else if (!strcmp(c, "copy")) cmd_copy(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "paste")) cmd_paste(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "fetch")) cmd_fetch(argc, argv);

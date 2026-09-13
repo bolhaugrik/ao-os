@@ -53,7 +53,7 @@ Minden szám little-endian.
 | 9 | ERR | híd → OS | hibaszöveg |
 | 10 | PING | bármely | üres |
 | 11 | PONG | bármely | üres |
-| 12 | FILE | OS → híd | `kind\nnév\n` + tartalom; `kind` = `shot` (a híd `shots/` mappájába menti) vagy `clip` (a PC vágólapjára); válasz DELTA + END |
+| 12 | FILE | OS → híd | `kind\nnév\n` + darab (≤ 48 KiB), ismételve; a zárás `done\nnév\n`, ekkor a híd összerakja: `shot` a `shots/` mappába (PPM → PNG), `clip` a PC vágólapjára; válasz DELTA + END |
 | 13 | CLIP_GET | OS → híd | üres; a PC vágólapját kéri |
 | 14 | CLIP | híd → OS | a vágólap szövege (UTF-8) |
 

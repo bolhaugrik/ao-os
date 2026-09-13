@@ -51,6 +51,7 @@ def tool_call(conn, tid, name, **kw):
 
 def handle(sock, addr, psk):
     conn = Conn(sock)
+    inbox = {}
     print(f"{addr[0]}: kapcsolodott", flush=True)
     try:
         while True:
@@ -85,7 +86,11 @@ def handle(sock, addr, psk):
                 conn.send(END, "stop=done\n")
             elif ftype == FILE:
                 kind, name, content = parse_file(payload)
-                text = content.decode("utf-8", errors="replace")
+                if kind != "done":
+                    inbox.setdefault(name, [kind, bytearray()])[1] += content
+                    continue
+                kind, buf = inbox.pop(name, ["shot", bytearray()])
+                text = bytes(buf).decode("utf-8", errors="replace")
                 if kind == "shot":
                     path = os.path.join(BUILD, f"shot-{name}.txt")
                     with open(path, "w", encoding="utf-8") as f:

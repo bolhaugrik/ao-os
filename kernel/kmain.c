@@ -20,6 +20,7 @@
 #include "drv/acpi.h"
 #include "drv/e1000.h"
 #include "drv/rtl8101.h"
+#include "drv/screenshot.h"
 #include "net/net.h"
 #include "net/dhcp.h"
 #include "fs/disk.h"
@@ -175,5 +176,6 @@ void kmain(struct bootinfo *bi)
     task_create_kernel("shell", shell_thread, NULL);
     if (net_dev())
         task_create_kernel("net", net_thread, NULL);
+    screenshot_init();                  /* F12: pixel-pontos kepernyokep a /state/shots ala */
     task_idle_loop();
 }

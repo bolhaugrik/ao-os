@@ -7,5 +7,7 @@ fs.read   /state/ai/**
 fs.read   /tmp/shot.txt
 fs.read   /tmp/clip.txt
 fs.write  /tmp/clip.txt
+fs.read   /state/**
+fs.read   /project/**
 mem       4M
 deadline  30s

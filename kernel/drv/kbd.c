@@ -1,5 +1,6 @@
 #include "kbd.h"
 #include "serial.h"
+#include "screenshot.h"
 #include "../arch/io.h"
 #include "../cpu/idt.h"
 #include "../cpu/pic.h"
@@ -144,6 +145,8 @@ static void kbd_irq(struct regs *r)
     if (sc == 0xE1) { return; }
     bool release = sc & 0x80;
     sc &= 0x7F;
+    if (!e0 && sc == 0x58 && !release)
+        screenshot_request();           /* F12: pixel-pontos kepernyokep, barmelyik modban */
 
     if (e0) {
         e0 = false;

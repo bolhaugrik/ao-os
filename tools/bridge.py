@@ -222,16 +222,45 @@ def make_backend(provider, model, effort, system):
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def save_shot(name, text):
-    """A netbook kepernyojenek szovege a shots/ mappaba, idobelyeggel."""
+def ppm_to_png(data):
+    """P6 PPM -> PNG (stdlib: zlib), a netbook /state/shots/N.ppm fajljaihoz"""
+    import struct
+    import zlib
+    parts = data.split(b"\n", 3)
+    if len(parts) < 4 or parts[0] != b"P6":
+        raise ValueError("nem P6 PPM")
+    w, h = map(int, parts[1].split())
+    px = parts[3]
+    raw = b"".join(b"\x00" + px[y * w * 3:(y + 1) * w * 3] for y in range(h))
+    def chunk(tag, body):
+        return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", zlib.crc32(tag + body) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def save_shot(name, content):
+    """A netbookrol jott kepernyokep vagy fajl a shots/ mappaba, idobelyeggel.
+    Szoveg -> .txt, PPM -> .png (atalakitva), mas binaris -> az eredeti nevvel."""
     import re
     import time
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:40] or "shot"
     d = os.path.join(ROOT, "shots")
     os.makedirs(d, exist_ok=True)
-    path = os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}-{safe}.txt")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if content.startswith(b"P6\n"):
+        path = os.path.join(d, f"{stamp}-{safe.rsplit('.', 1)[0]}.png")
+        with open(path, "wb") as f:
+            f.write(ppm_to_png(content))
+    else:
+        try:
+            text = content.decode("utf-8")
+            path = os.path.join(d, f"{stamp}-{safe if '.' in safe else safe + '.txt'}")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except UnicodeDecodeError:
+            path = os.path.join(d, f"{stamp}-{safe}")
+            with open(path, "wb") as f:
+                f.write(content)
     return os.path.relpath(path, ROOT)
 
 
@@ -290,6 +319,7 @@ class Session:
         self.backend = None
         self.context = ""
         self.agent = "agent"
+        self.inbox = {}             # FILE-darabok nev szerint, a "done"-ig
 
     def log(self, msg):
         print(f"[{self.addr[0]} {self.agent}] {msg}", flush=True)
@@ -350,20 +380,26 @@ class Session:
                         msg = getattr(e, "message", None) or str(e)
                         self.conn.send(ERR, f"{name}: {msg[:300]}")
                 elif ftype == FILE:
+                    # darabok: (kind, nev, darab)..., majd ("done", nev): akkor mentjuk
                     kind, name, content = parse_file(payload)
+                    if kind != "done":
+                        self.inbox.setdefault(name, [kind, bytearray()])[1] += content
+                        continue
+                    fkind, buf = self.inbox.pop(name, ["shot", bytearray()])
+                    content = bytes(buf)
                     text = content.decode("utf-8", errors="replace")
                     try:
-                        if kind == "shot":
-                            path = save_shot(name, text)
-                            self.log(f"kepernyokep: {path}")
+                        if fkind == "shot":
+                            path = save_shot(name, content)
+                            self.log(f"kepernyokep/fajl: {path} ({len(content)} bajt)")
                             self.conn.send(DELTA, f"mentve: {path}")
-                        elif kind == "clip":
+                        elif fkind == "clip":
                             clipboard_set(text)
                             n = text.count("\n")
                             self.log(f"vagolap: {n} sor")
                             self.conn.send(DELTA, f"vagolapra masolva ({n} sor)")
                         else:
-                            self.conn.send(ERR, f"ismeretlen fajl-tipus: {kind}")
+                            self.conn.send(ERR, f"ismeretlen fajl-tipus: {fkind}")
                     except Exception as e:  # tkinter/fajl-hiba
                         self.conn.send(ERR, f"{type(e).__name__}: {e}"[:300])
                     self.conn.send(END, "stop=file\n")

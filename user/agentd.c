@@ -239,6 +239,7 @@ static usize read_file(const char *path, char *buf, usize cap)
 /* --file KIND NEV UTVONAL: a fajl a PC-re megy (shot: shots/ mappa, clip: vagolap) */
 static int do_file(const char *kind, const char *name, const char *path)
 {
+    /* darabokban: FILE(kind, nev, darab)..., majd FILE("done", nev, ures); a hid osszerakja */
     static char fb[48 * 1024];
     usize kl = strlen(kind), nl = strlen(name);
     if (kl + nl + 2 > 128) return 1;
@@ -247,14 +248,22 @@ static int do_file(const char *kind, const char *name, const char *path)
     usize hl = kl + nl + 2;
     int fd = ao_open(path, O_READ);
     if (fd < 0) { ao_printf("agentd: %s: %s\n", path, ao_errstr(fd)); return 3; }
-    usize n = hl;
     for (;;) {
-        isize r = ao_read(fd, fb + n, sizeof fb - n);
-        if (r <= 0 || n + (usize)r >= sizeof fb) { if (r > 0) n += (usize)r; break; }
-        n += (usize)r;
+        usize n = hl;
+        while (n < sizeof fb) {
+            isize r = ao_read(fd, fb + n, sizeof fb - n);
+            if (r <= 0) break;
+            n += (usize)r;
+        }
+        if (n == hl) break;
+        int e = aop_send(AOP_FILE, fb, n);
+        if (e) { ao_printf("agentd: kuldes: %s\n", ao_errstr(e)); ao_close(fd); return 4; }
+        if (n < sizeof fb) break;
     }
     ao_close(fd);
-    aop_send(AOP_FILE, fb, n);
+    memcpy(fb, "done\n", 5);
+    memcpy(fb + 5, name, nl); fb[5 + nl] = '\n';
+    aop_send(AOP_FILE, fb, 6 + nl);
     int rc = 0;
     for (;;) {
         u16 type;

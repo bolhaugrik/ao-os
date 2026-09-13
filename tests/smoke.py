@@ -132,6 +132,11 @@ SESSIONS = [
         ("agent coder titkositott proba", "csatorna: titkositott"),
         ("cat /project/src/hello.txt", "irta az agent"),
         ("shot proba", "mentve: build/shot-proba.txt"),
+        ("screenshot", "[kepernyokep: /state/shots/1.ppm]"),
+        ("shot /state/shots/1.ppm", "mentve: build/shot-1.ppm.txt"),
+        ("shot /state/x.txt", "mentve: build/shot-x.txt.txt"),
+        ("rm /state/shots/1.ppm", "AO> "),                        # 2,9 MB: a 7 MiB-os tesztlemezen kell a hely
+        ("shot /etc/motd", "E_CAP"),                              # a clip manifest az /etc-t nem olvashatja
         ("echo masolando szoveg", "masolando szoveg"),
         ("copy", "vagolapra masolva (1 sor)"),
         ("copy 3", "vagolapra masolva (3 sor)"),
@@ -275,7 +280,7 @@ def main():
                 ok &= found
                 continue
             s.sendall(c.encode("utf-8") + b"\n")
-            out, found = recv_until(s, expect, 90 if c.startswith(("install", "IGEN", "fetch")) else 8)
+            out, found = recv_until(s, expect, 90 if c.startswith(("install", "IGEN", "fetch", "shot /")) else 8)
             log.append(out)
             if expect not in ("", "IGEN", "AO> "):
                 rest, _ = recv_until(s, "AO> ", 3)

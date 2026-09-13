@@ -5,7 +5,7 @@
 
 #define TCP_SOCKS 4
 #define TCP_RXBUF 65536
-#define TCP_MSS   1024
+#define TCP_MSS   1460      /* Ethernet MTU: 1500 - 20 IP - 20 TCP (FRAME_MAX 1536-ba belefer) */
 
 void tcp_init(void);
 void tcp_tick(void);                                           /* 10 ms-enkent */

@@ -62,6 +62,7 @@ KERNEL_C = [
     "kernel/drv/ahci.c",
     "kernel/drv/acpi.c",
     "kernel/drv/rtc.c",
+    "kernel/drv/screenshot.c",
     "kernel/drv/e1000.c",
     "kernel/drv/rtl8101.c",
     "kernel/net/net.c",
