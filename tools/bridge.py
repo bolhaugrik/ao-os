@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""AO-OS AI-hid: AOP v1 a netbook fele, Claude API (Anthropic SDK) a masik oldalon.
+"""AO-OS AI-hid: AOP v1 a netbook fele, valaszthato LLM-szolgaltato a masik oldalon.
 
-  python tools/bridge.py [--port 9010] [--model claude-sonnet-5] [--effort low|medium|high]
+  python tools/bridge.py [--provider claude|gemini] [--model NEV] [--effort low|medium|high] [--port 9010]
 
-Alapertelmezes: claude-sonnet-5, kozepes erofeszites (gyors valasz, alacsony koltseg).
-Megjegyzes: a "fast mode" csak az Opus-modelleken elerheto, a Sonneten nincs ilyen kapcsolo.
-
-A kulcsot az ANTHROPIC_API_KEY kornyezeti valtozobol (vagy az `ant auth login` profilbol)
-veszi az SDK. Protokoll: docs/AOP.md."""
+Szolgaltatok:
+  claude  Anthropic SDK, kulcs: ANTHROPIC_API_KEY (vagy `ant auth login` profil). Alap: claude-sonnet-5.
+  gemini  Google AI Studio REST (generativelanguage.googleapis.com), kulcs: GEMINI_API_KEY vagy
+          GOOGLE_API_KEY. Alap: gemini-2.5-flash. Nincs kulon csomag, a beepitett urllib eleg.
+A --provider elhagyhato: a modellnevbol (gemini-*) kovetkezik. Protokoll: docs/AOP.md.
+Az OS-t a valasztas nem erinti: a hid mindket iranyban ugyanazt az AOP-t beszeli."""
 import argparse
+import json
 import os
 import socket
 import struct
 import sys
 import threading
-
-import anthropic
+import urllib.error
+import urllib.request
 
 MAGIC = b"AOP1"
 HELLO, HELLO_OK, CONTEXT, PROMPT, DELTA, TOOL_CALL, TOOL_RESULT, END, ERR, PING, PONG = range(1, 12)
@@ -33,28 +35,16 @@ Ha egy eszkoz hibat ad, olvasd el a magyarazatot, es ne ismeteld ugyanazt a hiva
 Roviden, magyarul valaszolj, ekezetes betukkel. A feladat vegen hivd a done eszkozt egy rovid
 osszefoglaloval."""
 
-TOOLS = [
-    {"name": "fs_read", "description": "Fajl tartalmanak beolvasasa (max 16 KiB).",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
-                      "additionalProperties": False}, "strict": True},
-    {"name": "fs_write", "description": "Fajl irasa (letrehozas vagy felulirasa).",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                      "required": ["path", "content"], "additionalProperties": False}, "strict": True},
-    {"name": "fs_mkdir", "description": "Konyvtar letrehozasa (a hianyzo szulokkel egyutt).",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
-                      "additionalProperties": False}, "strict": True},
-    {"name": "fs_list", "description": "Konyvtar tartalmanak listazasa.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
-                      "additionalProperties": False}, "strict": True},
-    {"name": "task_run", "description": "AOX program futtatasa az OS-en (pl. 'hello'), a kimenete a konzolra megy; a visszateresi kodot kapod.",
-     "input_schema": {"type": "object", "properties": {"program": {"type": "string"}, "args": {"type": "string"}},
-                      "required": ["program", "args"], "additionalProperties": False}, "strict": True},
-    {"name": "ask_user", "description": "Kerdes a felhasznalonak a konzolon; a beirt sort kapod vissza.",
-     "input_schema": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"],
-                      "additionalProperties": False}, "strict": True},
-    {"name": "done", "description": "A feladat befejezese rovid osszefoglaloval.",
-     "input_schema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"],
-                      "additionalProperties": False}, "strict": True},
+# szolgaltato-fuggetlen eszkozleiras: nev, leiras, parameterek (nev -> leiras), mind kotelezo
+TOOL_DEFS = [
+    ("fs_read", "Fajl tartalmanak beolvasasa (max 16 KiB).", {"path": "abszolut utvonal"}),
+    ("fs_write", "Fajl irasa (letrehozas vagy felulirasa).", {"path": "abszolut utvonal", "content": "a fajl teljes tartalma"}),
+    ("fs_mkdir", "Konyvtar letrehozasa (a hianyzo szulokkel egyutt).", {"path": "abszolut utvonal"}),
+    ("fs_list", "Konyvtar tartalmanak listazasa.", {"path": "abszolut utvonal"}),
+    ("task_run", "AOX program futtatasa az OS-en (pl. 'hello'); a kimenete a konzolra megy, a visszateresi kodot kapod.",
+     {"program": "programnev a /bin alatt", "args": "argumentumok szokozzel elvalasztva (lehet ures)"}),
+    ("ask_user", "Kerdes a felhasznalonak a konzolon; a beirt sort kapod vissza.", {"question": "a kerdes szovege"}),
+    ("done", "A feladat befejezese rovid osszefoglaloval.", {"summary": "osszefoglalo"}),
 ]
 
 
@@ -104,77 +94,209 @@ def parse_tool_result(payload):
     return parts[0], parts[1], parts[2]
 
 
-# ---------------------------------------------------------------- egy kapcsolat
-class Session:
-    def __init__(self, sock, addr, model, effort):
-        self.sock = sock
-        self.addr = addr
+# ---------------------------------------------------------------- szolgaltatok
+class Backend:
+    """Egy beszelgetes egy szolgaltatoval. run_turn: a prompt utan eszkozhivas-ciklus.
+    call_tool(id, name, args) -> (status, content); send_delta(text); a visszateres a stop-ok."""
+    MAX_TOOL_CALLS = 40
+
+    def __init__(self, model, effort, system):
         self.model = model
         self.effort = effort
+        self.system = system
+
+    def run_turn(self, prompt, send_delta, call_tool, log):
+        raise NotImplementedError
+
+
+class ClaudeBackend(Backend):
+    def __init__(self, model, effort, system):
+        super().__init__(model, effort, system)
+        import anthropic
+        self.anthropic = anthropic
         self.client = anthropic.Anthropic()
         self.messages = []
-        self.context = ""
-        self.agent = "agent"
-
-    def log(self, msg):
-        print(f"[{self.addr[0]} {self.agent}] {msg}", flush=True)
+        self.tools = [{
+            "name": n, "description": d,
+            "input_schema": {"type": "object", "properties": {k: {"type": "string", "description": v} for k, v in p.items()},
+                             "required": list(p), "additionalProperties": False},
+            "strict": True,
+        } for n, d, p in TOOL_DEFS]
 
     def create_stream(self):
-        kwargs = dict(model=self.model, max_tokens=16000, system=SYSTEM + "\n\n" + self.context,
-                      tools=TOOLS, messages=self.messages,
-                      output_config={"effort": self.effort})
+        kwargs = dict(model=self.model, max_tokens=16000, system=self.system, tools=self.tools,
+                      messages=self.messages, output_config={"effort": self.effort})
         try:
             return self.client.beta.messages.stream(betas=["server-side-fallback-2026-07-01"],
                                                     fallbacks="default", **kwargs)
         except TypeError:
             return self.client.messages.stream(**kwargs)
 
-    MAX_TOOL_CALLS = 40
-
-    def run_turn(self, prompt):
+    def run_turn(self, prompt, send_delta, call_tool, log):
         self.messages.append({"role": "user", "content": prompt})
         calls = 0
         while True:
             if calls >= self.MAX_TOOL_CALLS:
-                send_frame(self.sock, ERR, f"tul sok eszkoz-hivas ({calls}), a feladat megszakitva")
-                return
+                return "toomany"
             with self.create_stream() as stream:
                 for event in stream:
                     if event.type == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
-                        send_frame(self.sock, DELTA, event.delta.text)
+                        send_delta(event.delta.text)
                 final = stream.get_final_message()
             self.messages.append({"role": "assistant", "content": final.content})
             if final.stop_reason == "refusal":
-                send_frame(self.sock, ERR, "a modell elutasitotta a kerest")
-                return
+                return "refusal"
             if final.stop_reason != "tool_use":
-                send_frame(self.sock, END, f"stop={final.stop_reason}\n")
-                return
+                return final.stop_reason
             tool_uses = [b for b in final.content if b.type == "tool_use"]
             results = []
             for tu in tool_uses:
                 calls += 1
-                self.log(f"tool {tu.name} {tu.input}")
-                send_frame(self.sock, TOOL_CALL, encode_tool_call(tu.id, tu.name, tu.input))
-                while True:
-                    ftype, payload = recv_frame(self.sock)
-                    if ftype is None:
-                        raise ConnectionError("a kapcsolat megszakadt eszkoz-hivas kozben")
-                    if ftype == PING:
-                        send_frame(self.sock, PONG)
-                        continue
-                    if ftype != TOOL_RESULT:
-                        continue
-                    rid, status, content = parse_tool_result(payload)
-                    if rid != tu.id:
-                        continue
-                    results.append({"type": "tool_result", "tool_use_id": tu.id, "content": content,
-                                    "is_error": status != "ok"})
-                    break
+                log(f"tool {tu.name} {tu.input}")
+                status, content = call_tool(tu.id, tu.name, tu.input)
+                results.append({"type": "tool_result", "tool_use_id": tu.id, "content": content,
+                                "is_error": status != "ok"})
             self.messages.append({"role": "user", "content": results})
             if any(tu.name == "done" for tu in tool_uses):
-                send_frame(self.sock, END, "stop=done\n")
-                return
+                return "done"
+
+
+class GeminiBackend(Backend):
+    """Google AI Studio: streamGenerateContent SSE-vel, functionDeclarations eszkozokkel."""
+    BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    def __init__(self, model, effort, system):
+        super().__init__(model, effort, system)
+        self.key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not self.key:
+            raise RuntimeError("nincs GEMINI_API_KEY (vagy GOOGLE_API_KEY) kornyezeti valtozo")
+        self.contents = []
+        self.call_seq = 0
+        self.tools = [{"functionDeclarations": [{
+            "name": n, "description": d,
+            "parameters": {"type": "OBJECT",
+                           "properties": {k: {"type": "STRING", "description": v} for k, v in p.items()},
+                           "required": list(p)},
+        } for n, d, p in TOOL_DEFS]}]
+
+    def request(self, send_delta):
+        body = {
+            "systemInstruction": {"parts": [{"text": self.system}]},
+            "contents": self.contents,
+            "tools": self.tools,
+            "generationConfig": {"maxOutputTokens": 8192, "temperature": 0.2},
+        }
+        if self.effort == "low":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+        url = f"{self.BASE}/{self.model}:streamGenerateContent?alt=sse"
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json", "x-goog-api-key": self.key})
+        text_parts = []
+        calls = []
+        finish = "STOP"
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = json.loads(line[5:].strip())
+                for cand in chunk.get("candidates", []):
+                    finish = cand.get("finishReason", finish) or finish
+                    for part in cand.get("content", {}).get("parts", []):
+                        if "text" in part and part["text"]:
+                            text_parts.append(part["text"])
+                            send_delta(part["text"])
+                        if "functionCall" in part:
+                            fc = part["functionCall"]
+                            calls.append((fc.get("name", ""), fc.get("args", {}) or {}))
+                if "error" in chunk:
+                    raise RuntimeError(chunk["error"].get("message", "ismeretlen hiba"))
+        return "".join(text_parts), calls, finish
+
+    def run_turn(self, prompt, send_delta, call_tool, log):
+        self.contents.append({"role": "user", "parts": [{"text": prompt}]})
+        ncalls = 0
+        while True:
+            if ncalls >= self.MAX_TOOL_CALLS:
+                return "toomany"
+            try:
+                text, calls, finish = self.request(send_delta)
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", errors="replace")[:300]
+                raise RuntimeError(f"Gemini API hiba {e.code}: {detail}")
+            model_parts = []
+            if text:
+                model_parts.append({"text": text})
+            for name, args in calls:
+                model_parts.append({"functionCall": {"name": name, "args": args}})
+            if not model_parts:
+                model_parts.append({"text": ""})
+            self.contents.append({"role": "model", "parts": model_parts})
+            if finish == "SAFETY":
+                return "refusal"
+            if not calls:
+                return "end_turn"
+            responses = []
+            for name, args in calls:
+                ncalls += 1
+                self.call_seq += 1
+                tid = f"g{self.call_seq}"
+                log(f"tool {name} {args}")
+                status, content = call_tool(tid, name, {k: str(v) for k, v in args.items()})
+                responses.append({"functionResponse": {"name": name, "response": {
+                    "status": status, "result": content}}})
+            self.contents.append({"role": "user", "parts": responses})
+            if any(name == "done" for name, _ in calls):
+                return "done"
+
+
+def make_backend(provider, model, effort, system):
+    if provider == "gemini":
+        return GeminiBackend(model, effort, system)
+    return ClaudeBackend(model, effort, system)
+
+
+# ---------------------------------------------------------------- egy kapcsolat
+class Session:
+    def __init__(self, sock, addr, provider, model, effort):
+        self.sock = sock
+        self.addr = addr
+        self.provider = provider
+        self.model = model
+        self.effort = effort
+        self.backend = None
+        self.context = ""
+        self.agent = "agent"
+
+    def log(self, msg):
+        print(f"[{self.addr[0]} {self.agent}] {msg}", flush=True)
+
+    def call_tool(self, tool_id, name, inputs):
+        send_frame(self.sock, TOOL_CALL, encode_tool_call(tool_id, name, inputs))
+        while True:
+            ftype, payload = recv_frame(self.sock)
+            if ftype is None:
+                raise ConnectionError("a kapcsolat megszakadt eszkoz-hivas kozben")
+            if ftype == PING:
+                send_frame(self.sock, PONG)
+                continue
+            if ftype != TOOL_RESULT:
+                continue
+            rid, status, content = parse_tool_result(payload)
+            if rid != tool_id:
+                continue
+            return status, content
+
+    def run_turn(self, prompt):
+        if self.backend is None:
+            self.backend = make_backend(self.provider, self.model, self.effort, SYSTEM + "\n\n" + self.context)
+        stop = self.backend.run_turn(prompt, lambda t: send_frame(self.sock, DELTA, t), self.call_tool, self.log)
+        if stop == "refusal":
+            send_frame(self.sock, ERR, "a modell elutasitotta a kerest")
+        elif stop == "toomany":
+            send_frame(self.sock, ERR, f"tul sok eszkoz-hivas ({Backend.MAX_TOOL_CALLS}), a feladat megszakitva")
+        else:
+            send_frame(self.sock, END, f"stop={stop}\n")
 
     def serve(self):
         self.log("kapcsolodott")
@@ -195,10 +317,12 @@ class Session:
                     self.log(f"prompt: {text[:80]!r}")
                     try:
                         self.run_turn(text)
-                    except anthropic.APIStatusError as e:
-                        send_frame(self.sock, ERR, f"API hiba {e.status_code}: {e.message}")
-                    except anthropic.APIConnectionError:
-                        send_frame(self.sock, ERR, "nem erheto el az API (halozat)")
+                    except (RuntimeError, urllib.error.URLError) as e:
+                        send_frame(self.sock, ERR, f"{e}")
+                    except Exception as e:  # SDK-hibak (APIStatusError, APIConnectionError, ...)
+                        name = type(e).__name__
+                        msg = getattr(e, "message", None) or str(e)
+                        send_frame(self.sock, ERR, f"{name}: {msg[:300]}")
                 elif ftype == PING:
                     send_frame(self.sock, PONG)
         except (ConnectionError, OSError) as e:
@@ -208,22 +332,51 @@ class Session:
             self.log("lezarva")
 
 
+def gemini_list_models():
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        sys.exit("hiba: nincs GEMINI_API_KEY (vagy GOOGLE_API_KEY) kornyezeti valtozo")
+    req = urllib.request.Request(f"{GeminiBackend.BASE}?pageSize=100", headers={"x-goog-api-key": key})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    for m in data.get("models", []):
+        if "generateContent" in m.get("supportedGenerationMethods", []):
+            print(f"  {m['name'].replace('models/', ''):40s} {m.get('displayName', '')}")
+
+
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=9010)
-    ap.add_argument("--model", default=os.environ.get("AO_MODEL", "claude-sonnet-5"))
+    ap.add_argument("--list-models", action="store_true", help="Gemini: elerheto modellek listaja, majd kilep")
+    ap.add_argument("--provider", choices=["claude", "gemini"], default=os.environ.get("AO_PROVIDER"))
+    ap.add_argument("--model", default=os.environ.get("AO_MODEL"))
     ap.add_argument("--effort", default=os.environ.get("AO_EFFORT", "medium"), choices=["low", "medium", "high"])
     a = ap.parse_args()
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        print("figyelem: nincs ANTHROPIC_API_KEY; az SDK az `ant auth login` profilt probalja", flush=True)
+    if a.list_models:
+        gemini_list_models()
+        return
+    if not a.provider:
+        a.provider = "gemini" if (a.model or "").startswith("gemini") else "claude"
+    if not a.model:
+        a.model = "gemini-2.5-flash" if a.provider == "gemini" else "claude-sonnet-5"
+    if a.provider == "claude":
+        if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            print("figyelem: nincs ANTHROPIC_API_KEY; az SDK az `ant auth login` profilt probalja", flush=True)
+    else:
+        if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
+            sys.exit("hiba: nincs GEMINI_API_KEY (vagy GOOGLE_API_KEY) kornyezeti valtozo")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", a.port))
     srv.listen(4)
-    print(f"AO-OS hid: 0.0.0.0:{a.port}, modell {a.model}, erofeszites {a.effort}", flush=True)
+    print(f"AO-OS hid: 0.0.0.0:{a.port}, szolgaltato {a.provider}, modell {a.model}, erofeszites {a.effort}", flush=True)
     while True:
         conn, addr = srv.accept()
-        threading.Thread(target=Session(conn, addr, a.model, a.effort).serve, daemon=True).start()
+        threading.Thread(target=Session(conn, addr, a.provider, a.model, a.effort).serve, daemon=True).start()
 
 
 if __name__ == "__main__":

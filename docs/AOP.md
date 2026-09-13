@@ -3,6 +3,13 @@
 A netbook nem beszél HTTPS-t és JSON-t. Egy TCP-kapcsolaton keretezett üzeneteket cserél a híddal
 (`tools/bridge.py`), amely a tényleges AI-API-hoz beszél. A híd cseréje nem érinti az OS-t.
 
+## Szolgáltatók a híd mögött
+
+A híd (`tools/bridge.py`) `--provider claude|gemini` kapcsolóval választ: Claude az Anthropic SDK-n át
+(`ANTHROPIC_API_KEY`, alap `claude-sonnet-5`), Gemini a Google AI Studio REST-API-ján át
+(`GEMINI_API_KEY`, alap `gemini-2.5-flash`, `--list-models` az elérhető nevekhez). A netbook felé
+mindkettő ugyanezt az AOP-t beszéli, az OS-en semmi nem függ a szolgáltatótól.
+
 ## Keret
 
 ```
