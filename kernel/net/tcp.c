@@ -48,11 +48,16 @@ struct sock {
 };
 
 static struct sock socks[TCP_SOCKS];
+static struct tcp_stats stats;
 
 void tcp_init(void)
 {
     memset(socks, 0, sizeof socks);
+    memset(&stats, 0, sizeof stats);
+    stats.min_wnd = 0xFFFFFFFFu;
 }
+
+void tcp_get_stats(struct tcp_stats *out) { *out = stats; }
 
 static const char *names[] = { "closed", "syn-sent", "established", "fin-wait", "close-wait", "last-ack", "time-wait" };
 const char *tcp_state_name(int s) { return (s >= 0 && s < TCP_SOCKS) ? names[socks[s].state] : "?"; }
@@ -77,19 +82,27 @@ static int send_seg(struct sock *s, u32 seq, u8 flags, const void *data, usize l
     u8 pkt[FRAME_MAX];
     struct tcp_hdr *h = (struct tcp_hdr *)pkt;
     memset(h, 0, sizeof *h);
+    usize hl = sizeof *h;
+    if (flags & F_SYN) {
+        /* MSS opcio: a partner tudja, hogy 1460 bajtos szegmenseket kuldunk (nyugtazasi dontesekhez) */
+        u8 *o = pkt + sizeof *h;
+        o[0] = 2; o[1] = 4; o[2] = TCP_MSS >> 8; o[3] = TCP_MSS & 0xFF;
+        hl += 4;
+    }
     h->sport = htons(s->lport);
     h->dport = htons(s->rport);
     h->seq = htonl(seq);
     h->ack = htonl(s->rcv_nxt);
-    h->off = (u8)((sizeof *h / 4) << 4);
+    h->off = (u8)((hl / 4) << 4);
     h->flags = flags;
     u32 win = TCP_RXBUF - s->rx_count;
     if (win > 65535) win = 65535;
     s->adv_win = win;
     h->win = htons((u16)win);
-    if (len) memcpy(pkt + sizeof *h, data, len);
-    h->csum = htons(tcp_csum(net_cfg.ip, s->rip, pkt, sizeof *h + len));
-    return net_send_ip(s->rip, 6, pkt, sizeof *h + len);
+    if (len) memcpy(pkt + hl, data, len);
+    h->csum = htons(tcp_csum(net_cfg.ip, s->rip, pkt, hl + len));
+    stats.tx_segs++;
+    return net_send_ip(s->rip, 6, pkt, hl + len);
 }
 
 static inline u32 inflight(struct sock *s) { return s->snd_nxt - s->snd_una; }
@@ -111,6 +124,7 @@ static void tx_pump(struct sock *s)
 {
     u32 wnd = s->snd_wnd ? s->snd_wnd : TCP_MSS;   /* zero window: egy szegmensnyi proba */
     if (wnd > TCP_TXBUF) wnd = TCP_TXBUF;
+    if (s->tx_len > inflight(s) && inflight(s) >= wnd && wnd < TCP_TXBUF) stats.wnd_limited++;
     while (inflight(s) < s->tx_len && inflight(s) < wnd) {
         u32 off = inflight(s);
         u32 n = s->tx_len - off;
@@ -156,6 +170,7 @@ void tcp_tick(void)
                 continue;
             }
             s->rto_tick = now + 50 * (u64)(1 << (s->retries > 4 ? 4 : s->retries));
+            stats.retrans++;
             if (s->ctl_flags) {
                 send_seg(s, s->ctl_seq, s->ctl_flags, NULL, 0);
             } else {
@@ -196,6 +211,11 @@ void tcp_rx(u32 src, u32 dst, const u8 *seg, usize len)
     usize dl = len - hl;
     s->last_activity = pit_ticks();
     s->snd_wnd = ntohs(h->win);
+    if (s->state == T_ESTABLISHED) {
+        if (s->snd_wnd < stats.min_wnd) stats.min_wnd = s->snd_wnd;
+        if (s->snd_wnd == 0) stats.zero_wnd++;
+        if ((fl & F_ACK) && dl == 0) stats.rx_acks++;
+    }
 
     if (fl & F_RST) { s->reset = true; s->state = T_CLOSED; waitq_wake_all(&s->q); return; }
 

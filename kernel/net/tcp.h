@@ -8,6 +8,12 @@
 #define TCP_TXBUF 32768     /* kuldo ablak: ennyi lehet uton nyugtazatlanul */
 #define TCP_MSS   1460      /* Ethernet MTU: 1500 - 20 IP - 20 TCP (FRAME_MAX 1536-ba belefer) */
 
+struct tcp_stats {
+    u64 tx_segs, rx_acks, retrans, zero_wnd, wnd_limited;
+    u32 min_wnd;                /* a partner legkisebb hirdetett ablaka (established) */
+};
+void tcp_get_stats(struct tcp_stats *out);
+
 void tcp_init(void);
 void tcp_tick(void);                                           /* 10 ms-enkent */
 void tcp_rx(u32 src, u32 dst, const u8 *seg, usize len);

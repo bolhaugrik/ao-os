@@ -681,6 +681,10 @@ static void cmd_net(void)
     u64 rx, tx, drop;
     net_stats(&rx, &tx, &drop);
     kprintf("rx %lu  tx %lu  eldobva %lu\n", rx, tx, drop);
+    struct tcp_stats ts;
+    tcp_get_stats(&ts);
+    kprintf("tcp: kuldott szegmens %lu  kapott ack %lu  ujrakuldes %lu  nulla-ablak %lu  ablak-korlat %lu  min ablak %u\n",
+            ts.tx_segs, ts.rx_acks, ts.retrans, ts.zero_wnd, ts.wnd_limited, ts.min_wnd == 0xFFFFFFFFu ? 0 : ts.min_wnd);
 }
 
 static void cmd_dhcp(void)
