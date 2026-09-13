@@ -17,6 +17,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -383,10 +384,15 @@ class Session:
                     # darabok: (kind, nev, darab)..., majd ("done", nev): akkor mentjuk
                     kind, name, content = parse_file(payload)
                     if kind != "done":
-                        self.inbox.setdefault(name, [kind, bytearray()])[1] += content
+                        if name not in self.inbox:
+                            self.inbox[name] = [kind, bytearray(), time.time()]
+                        self.inbox[name][1] += content
                         continue
-                    fkind, buf = self.inbox.pop(name, ["shot", bytearray()])
+                    fkind, buf, t0 = self.inbox.pop(name, ["shot", bytearray(), time.time()])
                     content = bytes(buf)
+                    dt = time.time() - t0
+                    if len(content) > 65536:
+                        self.log(f"fajl {name}: {len(content) / 1024:.0f} KiB, {dt:.2f} s, {len(content) / dt / 1000 if dt else 0:.0f} KB/s")
                     text = content.decode("utf-8", errors="replace")
                     try:
                         if fkind == "shot":
@@ -521,7 +527,8 @@ def main():
     srv.bind(("0.0.0.0", a.port))
     srv.listen(4)
     print(f"AO-OS hid: 0.0.0.0:{a.port}, szolgaltato {a.provider}, modell {a.model}, erofeszites {a.effort}, "
-          f"{'PSK-titkositas' if psk else 'titkositatlan (nincs ' + a.psk_file + ')'}", flush=True)
+          f"{'PSK-titkositas' if psk else 'titkositatlan (nincs ' + a.psk_file + ')'}"
+          f"{'' if not psk or aocrypto.FAST else '  (LASSU: tiszta Python; pip install cryptography)'}", flush=True)
     while True:
         conn, addr = srv.accept()
         threading.Thread(target=Session(conn, addr, a.provider, a.model, a.effort, psk, not a.psk_optional).serve,

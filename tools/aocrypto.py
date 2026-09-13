@@ -67,7 +67,19 @@ def _pad16(b):
     return b"\x00" * ((16 - len(b) % 16) % 16)
 
 
+# Gyorsitas: a 'cryptography' csomag (C-ben) ugyanezt az RFC 8439 AEAD-ot adja, ~1000x gyorsabban.
+# Tiszta Pythonban a hid 0,25 MB/s-mal bont, ami a netbook feltolteseit fojtotta (nulla-ablak).
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305 as _Fast
+except Exception:  # nincs telepitve: marad a tiszta Python
+    _Fast = None
+
+FAST = _Fast is not None
+
+
 def aead_encrypt(key, nonce, aad, plaintext):
+    if _Fast is not None:
+        return _Fast(key).encrypt(nonce, bytes(plaintext), bytes(aad))
     otk = chacha20_block(key, 0, nonce)[:32]
     ct = chacha20_xor(key, 1, nonce, plaintext)
     mac_data = aad + _pad16(aad) + ct + _pad16(ct) + struct.pack("<QQ", len(aad), len(ct))
@@ -77,6 +89,11 @@ def aead_encrypt(key, nonce, aad, plaintext):
 def aead_decrypt(key, nonce, aad, ct_tag):
     if len(ct_tag) < 16:
         return None
+    if _Fast is not None:
+        try:
+            return _Fast(key).decrypt(nonce, bytes(ct_tag), bytes(aad))
+        except Exception:  # rossz tag
+            return None
     ct, tag = ct_tag[:-16], ct_tag[-16:]
     otk = chacha20_block(key, 0, nonce)[:32]
     mac_data = aad + _pad16(aad) + ct + _pad16(ct) + struct.pack("<QQ", len(aad), len(ct))
@@ -130,7 +147,7 @@ def selftest():
     hk = hchacha20(bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
                    bytes.fromhex("000000090000004a0000000031415927"))
     assert hk == bytes.fromhex("82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc"), "hchacha20"
-    print("aocrypto: minden tesztvektor OK")
+    print(f"aocrypto: minden tesztvektor OK ({'cryptography (C)' if FAST else 'tiszta Python'})")
 
 
 if __name__ == "__main__":

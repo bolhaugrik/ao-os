@@ -86,6 +86,11 @@ A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`
 teljes képernyőn, linkről linkre Tab-bal, Enter megnyit. A PC-n ehhez `pip install playwright pillow` és
 `python -m playwright install chromium` kell; a netbookon semmi.
 
+**Sebesség:** a híd PSK-titkosítása `pip install cryptography` mellett C-ben fut (nélküle tiszta Python,
+~0,25 MB/s, ami fojtja a nagy feltöltéseket, például a képernyőképeket; a híd indításkor szól, ha ez hiányzik).
+Nyers TCP-mérés a netbookról: a PC-n `python tests\sink.py`, a netbookon `netbench <PC IP> 9020 [MB]`;
+a `net` parancs TCP-számlálókat is mutat (újraküldés, nulla ablak, ablakkorlát).
+
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
 

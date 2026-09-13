@@ -89,6 +89,7 @@ static const struct cmd cmds[] = {
     { "net dhcp",        "",                     "halozati allapot; cim kerese DHCP-vel", 4 },
     { "ip",              "CIM MASZK [ATJARO]",   "statikus cim", 4 },
     { "ping nc",         "CIM [PORT [SZOVEG]]",  "ICMP ping; TCP proba", 4 },
+    { "netbench",        "CIM PORT [MB]",        "nyers TCP-kuldes merese (PC-n: python tests\\sink.py PORT)", 4 },
     { "disk",            "",                     "tarolo-vezerlok, lemez, particio", 5 },
     { "install update",  "",                     "telepites a belso lemezre; frissites (/state marad)", 5 },
     { "mkfs sync",       "",                     "particio formazasa; irasok kiirasa", 5 },
@@ -744,6 +745,37 @@ static void cmd_nc(int argc, char **argv)
     kprintf("\nnc: zarva\n");
 }
 
+/* netbench CIM PORT [MB]: nyers TCP-kuldes merese (titkositas es hid nelkul; PC-n: tests/sink.py PORT) */
+static void cmd_netbench(int argc, char **argv)
+{
+    u32 ip;
+    if (argc < 3 || !ip_parse(argv[1], &ip)) { kprintf("netbench CIM PORT [MB]\n"); return; }
+    u32 port = 0, mb = 4;
+    for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++) port = port * 10 + (u32)(*p - '0');
+    if (argc > 3) { mb = 0; for (const char *p = argv[3]; *p >= '0' && *p <= '9'; p++) mb = mb * 10 + (u32)(*p - '0'); }
+    if (!mb || mb > 256) mb = 4;
+    struct tcp_stats before, after;
+    tcp_get_stats(&before);
+    int s = tcp_connect(ip, (u16)port, 5000);
+    if (s < 0) { kprintf("netbench: kapcsolodas: %s\n", errstr(s)); return; }
+    static u8 blk[32768];
+    for (usize i = 0; i < sizeof blk; i++) blk[i] = (u8)i;
+    u64 t0 = rdtsc();
+    usize total = 0;
+    for (u32 i = 0; i < mb * 32; i++) {
+        isize w = tcp_send(s, blk, sizeof blk);
+        if (w <= 0) { kprintf("netbench: kuldes: %s\n", errstr((int)w)); break; }
+        total += (usize)w;
+    }
+    tcp_close(s);
+    u64 ms = tsc_to_ms(rdtsc() - t0);
+    tcp_get_stats(&after);
+    kprintf("netbench: %lu KiB, %lu ms, %lu KB/s\n", total / 1024, ms, ms ? total / ms : 0);
+    kprintf("  szegmens %lu  ack %lu  ujrakuldes %lu  nulla-ablak %lu  ablak-korlat %lu  min ablak %u\n",
+            after.tx_segs - before.tx_segs, after.rx_acks - before.rx_acks, after.retrans - before.retrans,
+            after.zero_wnd - before.zero_wnd, after.wnd_limited - before.wnd_limited, after.min_wnd == 0xFFFFFFFFu ? 0 : after.min_wnd);
+}
+
 static void cmd_update(void)
 {
     if (!blk_present()) { kprintf("update: nincs lemez\n"); return; }
@@ -1239,6 +1271,7 @@ static void execute(char *line)
     else if (!strcmp(c, "ip")) cmd_ip(argc, argv);
     else if (!strcmp(c, "ping")) cmd_ping(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "nc")) cmd_nc(argc, argv);
+    else if (!strcmp(c, "netbench")) cmd_netbench(argc, argv);
     else if (!strcmp(c, "install")) cmd_install(false);
     else if (!strcmp(c, "mkfs")) cmd_install(true);
     else if (!strcmp(c, "update")) cmd_update();
