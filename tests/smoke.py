@@ -135,6 +135,9 @@ SESSIONS = [
         ("\x1b[B\x1b[Bs", "mentve: /state/projector/teszt-lap-cime.json"),
         ("q", "projector: Teszt lap cime ("),
         ("cat /state/projector/teszt-lap-cime.json", "\"t\":\"quote\""),
+        ("2048", "legjobb"),
+        ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
+        ("cat /state/games/2048", "AO> "),
     ],
 ]
 

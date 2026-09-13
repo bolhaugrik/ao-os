@@ -74,6 +74,7 @@ A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`
 `projector --dump …` szövegként írja ki. PC-n külön is próbálható: `python tools\projector.py <cím | kérdés>`.
 
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
+Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
 `time`, `date` és a `set` alparancsuk a CMOS órát kezeli; `status` az állapot-összefoglaló; Tab kiegészít.
 
 ## Elrendezés

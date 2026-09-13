@@ -90,6 +90,7 @@ static const struct cmd cmds[] = {
     { "install update",  "",                     "telepites a belso lemezre; frissites (/state marad)", 5 },
     { "mkfs sync",       "",                     "particio formazasa; irasok kiirasa", 5 },
     { "lastpanic",       "[clear]",              "az utolso panic a lemezrol", 5 },
+    { "2048",            "",                     "a jatek: nyilak, r uj jatek, q kilep (legjobb: /state/games)", 6 },
     { "echo",            "SZOVEG",               "szoveg kiirasa", 6 },
     { "crash",           "[div|page|ud]",        "szandekos kernel-kivetel (teszt)", 6 },
     { "reboot poweroff", "",                     "ujrainditas; kikapcsolas (ACPI)", 6 },
@@ -934,7 +935,7 @@ static void cmd_spawn(int argc, char **argv)
 /* ai SZOVEG  -> chat-agent;  agent NEV SZOVEG -> /state/agents/NEV.cap vagy /etc/agents/NEV.cap */
 static void cmd_agent(const char *name, const char *prog, int argc, char **argv, int first)
 {
-    if (first >= argc) { kprintf("hasznalat: ai KERDES  |  agent NEV FELADAT\n"); return; }
+    if (first > argc) return;
     char mpath[VFS_PATH_MAX];
     struct stat st;
     snformat(mpath, sizeof mpath, "/state/agents/%s.cap", name);
@@ -1159,8 +1160,9 @@ static void execute(char *line)
     else if (!strcmp(c, "pwd")) kprintf("%s\n", cwd());
     else if (!strcmp(c, "run")) { if (argc > 1) cmd_run(argc, argv); else kprintf("run: programnev kell\n"); }
     else if (!strcmp(c, "spawn")) cmd_spawn(argc, argv);
-    else if (!strcmp(c, "ai")) cmd_agent("chat", "agentd", argc, argv, 1);
+    else if (!strcmp(c, "ai")) { if (argc > 1) cmd_agent("chat", "agentd", argc, argv, 1); else kprintf("hasznalat: ai KERDES\n"); }
     else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], "agentd", argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
+    else if (!strcmp(c, "2048")) { quiet_run = true; cmd_agent("game", "game2048", argc, argv, 1); quiet_run = false; }
     else if (!strcmp(c, "projector")) {
         if (argc > 1) { quiet_run = true; cmd_agent("projector", "projector", argc, argv, 1); quiet_run = false; }
         else kprintf("projector CIM | KERDES  (--dump: szovegkent, teljes kepernyo helyett)\n");

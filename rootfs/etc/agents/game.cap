@@ -1,0 +1,7 @@
+# jatekok: konzol, kepernyomeret, es a /state/games ala mentett eredmenyek
+agent game
+console
+sysinfo
+fs.read   /state/games/**
+fs.write  /state/games/**
+mem       4M
