@@ -563,7 +563,12 @@ static void splash(void)
     console_set_color(CON_DEFAULT_FG, CON_BLACK);
     print_status();
     console_set_color(CON_BBLACK, CON_BLACK);
-    kprintf("  help = parancsok   Tab = kiegeszites   PgUp = boot-uzenetek   /state/rc = indito szkript\n\n");
+    kprintf("  help = parancsok   Tab = kiegeszites   PgUp = boot-uzenetek   /state/rc = indito szkript\n");
+    if (disk_refreshed_from()) {
+        console_set_color(CON_BYELLOW, CON_BLACK);
+        kprintf("  frissitve: a programok a ramdiskbol atmasolva (elozo build: %s)\n", disk_refreshed_from());
+    }
+    kprintf("\n");
     console_set_color(CON_DEFAULT_FG, CON_BLACK);
 }
 

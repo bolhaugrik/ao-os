@@ -19,6 +19,7 @@ void disk_image_stamp(const void *img, usize n, char *out, usize cap);   /* a ke
 void disk_running_build(char *out, usize cap);         /* a futo ramdisk build-belyege ('' ha nincs) */
 bool disk_booted_from_disk(void);                      /* a lemez boot-terulete ezt a ramdiskt tartalmazza */
 void disk_sync_from_ramdisk(void);                     /* boot: bin/, etc/ a ramdiskbol, ha mas a build */
+const char *disk_refreshed_from(void);                 /* az elozo build, ha ez az indulas frissitett; NULL ha nem */
 
 void panic_store_write(const char *text);              /* panic-bol hivhato (polling I/O) */
 int  panic_store_read(char *buf, usize cap);           /* 0 = nincs, >0 hossz */

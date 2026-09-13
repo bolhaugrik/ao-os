@@ -150,6 +150,8 @@ bool disk_booted_from_disk(void)
 /* Boot utan, ha a lemez a gyoker: a ramdisk build-belyege mas, mint a lemez /etc/build-je -> a bin/ es etc/
  * frissul a ramdiskbol (a halozati update igy juttatja a programokat a lemezre). Csak akkor, ha a lemez
  * boot-terulete ezt a ramdiskt tartalmazza: egy regi pendrive-rol indulva nem irjuk felul a lemezt. */
+static char refreshed_from[STAMP_MAX];      /* az elozo build, ha ez az indulas frissitett (a splash mutatja) */
+
 void disk_sync_from_ramdisk(void)
 {
     char rd[STAMP_MAX], dk[STAMP_MAX];
@@ -165,8 +167,13 @@ void disk_sync_from_ramdisk(void)
     int e = copy_tree("/rd", "/", true);
     vfs_sync();
     if (e) kprintf("lemez: a frissites megszakadt (hiba %d); update rd a pendrive-rol\n", e);
-    else kprintf("[frissitve: bin/ es etc/ a ramdiskbol, build %s]\n", rd);
+    else {
+        kprintf("[frissitve: bin/ es etc/ a ramdiskbol, build %s]\n", rd);
+        snformat(refreshed_from, sizeof refreshed_from, "%s", dk[0] ? dk : "nincs belyeg");
+    }
 }
+
+const char *disk_refreshed_from(void) { return refreshed_from[0] ? refreshed_from : NULL; }
 
 /* ---------------------------------------------------------------- halozati frissites */
 int disk_update_image(const void *img, usize n)
