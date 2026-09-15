@@ -279,7 +279,10 @@ void console_write(const char *s)
 
 void console_clear(void)
 {
-    /* a lathato kepernyot uritjuk: rows uj ures sort tolunk a gyurube */
+    /* a lathato kepernyot uritjuk: rows uj ures sort tolunk a gyurube (a regi a gorgetesben marad).
+     * A kurzort elobb az also sorba tesszuk, kulonben a newline() csak lefele lepne, es a kepernyo
+     * felso resze megmaradna (a szerkeszto kilepesekor igy latszott a regi tartalom). */
+    cur_row = rows - 1;
     for (u32 r = 0; r < rows; r++)
         newline();
     cur_col = 0;
