@@ -387,7 +387,7 @@ static void cmd_help(const char *what)
         return;
     }
     label("AO-OS " AO_VERSION " parancsok");
-    kprintf("   (help PARANCS = reszletek, Tab = kiegeszites)\n");
+    kprintf("   (help PARANCS vagy PARANCS --help = reszletek, Tab = kiegeszites)\n");
     for (u8 g = 0; g < sizeof group_names / sizeof group_names[0]; g++) {
         label(group_names[g]);
         kprintf("\n");
@@ -1734,6 +1734,11 @@ static void execute(char *line)
     if (!argc) return;
     cmd_count++;
     const char *c = argv[0];
+    /* PARANCS --help / -h / ? : ugyanaz, mint help PARANCS */
+    if (argc > 1 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h") || !strcmp(argv[1], "?")) && strcmp(c, "help") != 0) {
+        cmd_help(c);
+        return;
+    }
     if (!strcmp(c, "help") || !strcmp(c, "/?") || !strcmp(c, "?")) cmd_help(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "status")) print_status();
     else if (!strcmp(c, "time")) cmd_time(argc, argv);

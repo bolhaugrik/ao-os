@@ -32,6 +32,8 @@ SESSIONS = [
     [   # 1. menet: alap parancsok, taskok, capability, formazas, perzisztens iras, panic
         ("help", "Tab = kiegeszites"),
         ("help copy", "vagolap"),
+        ("head --help", "elso / utolso N sor"),
+        ("grep -h", "sorok keresese"),
         ("hel\t", "Rendszer"),
         ("cat /boot.t\t", "AO-OS ramdisk"),
         ("status", "hid"),
