@@ -126,7 +126,162 @@ static u32 byte_at_cells(const struct line *l, u32 cells)
     return i;
 }
 
+/* ---------------------------------------------------------------- szintaxis (Python) */
+/* Bajtonkenti osztalyozas soronkent; a tripla idezojeles karakterlanc allapota a sor elejen az elozo
+ * sorokbol adodik (vegigolvassuk oket, olcso). Csak .py fajlnal fut. */
+enum { C_NORM = 0, C_KW, C_STR, C_COM, C_NUM, C_BUILTIN, C_ERR, C_MATCH };
+static bool is_py;
+static const char *const py_kw[] = {
+    "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "as", "in", "not", "and",
+    "or", "try", "except", "finally", "with", "pass", "break", "continue", "lambda", "yield", "None", "True",
+    "False", "global", "nonlocal", "del", "raise", "assert", "is", "async", "await", NULL };
+static const char *const py_builtin[] = {
+    "print", "input", "len", "range", "int", "str", "float", "list", "dict", "set", "tuple", "open", "abs", "min",
+    "max", "sum", "sorted", "enumerate", "zip", "map", "filter", "type", "isinstance", "bool", "bytes", "round",
+    "chr", "ord", "any", "all", "repr", "super", "object", "Exception", "self", NULL };
+
+static bool ident_ch(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || (u8)c >= 0x80; }
+
+static bool word_in(const char *s, u32 n, const char *const *list)
+{
+    for (; *list; list++)
+        if (strlen(*list) == n && memcmp(s, *list, n) == 0) return true;
+    return false;
+}
+
+/* cls[i] a sor i. bajtjanak osztalya (cls lehet NULL: csak az allapot kell); visszaadja a sor vegi
+ * tripla-allapotot (0, '"' vagy '\'') */
+static char classify(const struct line *l, char st, u8 *cls)
+{
+    const char *s = l->s;
+    u32 n = l->len, i = 0;
+    while (i < n) {
+        if (st) {                                       /* tripla idezojeles karakterlancban vagyunk */
+            u32 j = i;
+            while (j + 2 < n && !(s[j] == st && s[j + 1] == st && s[j + 2] == st)) j++;
+            if (j + 2 < n) { if (cls) memset(cls + i, C_STR, j + 3 - i); i = j + 3; st = 0; }
+            else { if (cls) memset(cls + i, C_STR, n - i); i = n; }
+            continue;
+        }
+        char c = s[i];
+        if (c == '#') { if (cls) memset(cls + i, C_COM, n - i); break; }
+        if (c == '"' || c == '\'') {
+            if (i + 2 < n && s[i + 1] == c && s[i + 2] == c) { if (cls) memset(cls + i, C_STR, 3); i += 3; st = c; continue; }
+            u32 j = i + 1;
+            while (j < n && s[j] != c) { if (s[j] == '\\' && j + 1 < n) j++; j++; }
+            if (j < n) j++;
+            if (cls) memset(cls + i, C_STR, j - i);
+            i = j;
+            continue;
+        }
+        if (ident_ch(c) && !(c >= '0' && c <= '9')) {
+            u32 j = i;
+            while (j < n && ident_ch(s[j])) j++;
+            u8 k = word_in(s + i, j - i, py_kw) ? C_KW : word_in(s + i, j - i, py_builtin) ? C_BUILTIN : C_NORM;
+            if (cls) memset(cls + i, k, j - i);
+            i = j;
+            continue;
+        }
+        if (c >= '0' && c <= '9') {
+            u32 j = i;
+            while (j < n && (ident_ch(s[j]) || s[j] == '.')) j++;
+            if (cls) memset(cls + i, C_NUM, j - i);
+            i = j;
+            continue;
+        }
+        if (cls) cls[i] = C_NORM;
+        i++;
+    }
+    return st;
+}
+
+static char state_before(u32 idx)
+{
+    char st = 0;
+    for (u32 i = 0; i < idx; i++) st = classify(&L[i], st, NULL);
+    return st;
+}
+
+/* hibajelzes (F5 utan): sor, es szintaxishibanal a par nelkuli zarojel helye */
+static u32 err_line;                /* 1-alapu, 0 = nincs */
+static i64 err_bl = -1, err_bx;     /* a piros zarojel sora es bajtja */
+/* a kurzor alatti zarojel parja */
+static i64 m1_l = -1, m1_x, m2_l = -1, m2_x;
+
+static bool is_open(char c) { return c == '(' || c == '[' || c == '{'; }
+static bool is_close(char c) { return c == ')' || c == ']' || c == '}'; }
+static char pair_of(char c) { return c == '(' ? ')' : c == '[' ? ']' : c == '{' ? '}' : c == ')' ? '(' : c == ']' ? '[' : '{'; }
+
+/* a teljes fajl zarojelei: az elso hibas zaro, vagy az utolso nyitva maradt nyito -> err_bl/err_bx */
+static void find_unbalanced(void)
+{
+    err_bl = -1;
+    if (!is_py) return;
+    struct { u32 l, x; char c; } stack[256];
+    u32 sp = 0;
+    char st = 0;
+    static u8 cls[4096];
+    for (u32 li = 0; li < nl; li++) {
+        const struct line *l = &L[li];
+        u32 n = l->len < sizeof cls ? l->len : (u32)sizeof cls;
+        st = classify(l, st, cls);
+        for (u32 i = 0; i < n; i++) {
+            if (cls[i] != C_NORM) continue;
+            char c = l->s[i];
+            if (is_open(c)) { if (sp < 256) { stack[sp].l = li; stack[sp].x = i; stack[sp].c = c; sp++; } }
+            else if (is_close(c)) {
+                if (!sp || pair_of(stack[sp - 1].c) != c) { err_bl = li; err_bx = i; return; }
+                sp--;
+            }
+        }
+    }
+    if (sp) { err_bl = stack[sp - 1].l; err_bx = stack[sp - 1].x; }
+}
+
+/* a kurzor alatti (vagy elotti) zarojel parja; a keresés karakterlancot/megjegyzest kihagy */
+static void find_match(void)
+{
+    m1_l = m2_l = -1;
+    if (!is_py || !nl) return;
+    static u8 cls[4096];
+    const struct line *l = &L[cy];
+    u32 x = cx;
+    if (!(x < l->len && (is_open(l->s[x]) || is_close(l->s[x])))) {
+        if (x > 0 && (is_open(l->s[x - 1]) || is_close(l->s[x - 1]))) x--;
+        else return;
+    }
+    char st0 = state_before(cy);
+    u32 n = l->len < sizeof cls ? l->len : (u32)sizeof cls;
+    classify(l, st0, cls);
+    if (x >= n || cls[x] != C_NORM) return;
+    char c = l->s[x], want = pair_of(c);
+    int dir = is_open(c) ? 1 : -1;
+    int depth = 0;
+    i64 li = cy;
+    i64 i = x;
+    char st = st0;
+    for (u32 steps = 0; steps < 2000; steps++) {
+        const struct line *cl = &L[li];
+        n = cl->len < sizeof cls ? cl->len : (u32)sizeof cls;
+        if (li != (i64)cy) { st = dir > 0 ? st : state_before((u32)li); classify(cl, st, cls); }
+        for (; i >= 0 && i < (i64)n; i += dir) {
+            if (cls[i] != C_NORM) continue;
+            char d = cl->s[i];
+            if (d == c) depth++;
+            else if (d == want && --depth == 0) { m1_l = cy; m1_x = x; m2_l = li; m2_x = i; return; }
+        }
+        if (dir > 0) { st = classify(cl, li == (i64)cy ? st0 : st, NULL); li++; if (li >= (i64)nl) return; i = 0; }
+        else { li--; if (li < 0) return; i = (i64)L[li].len - 1; }
+    }
+}
+
 /* ---------------------------------------------------------------- rajzolas */
+/* minden sorozat 0-val kezd: a hatteres (hiba, par) osztalybol kilepve is tiszta lap */
+static const char *const cls_seq[] = {
+    [C_NORM] = "\x1b[0m", [C_KW] = "\x1b[0;94m", [C_STR] = "\x1b[0;33m", [C_COM] = "\x1b[0;90m", [C_NUM] = "\x1b[0;96m",
+    [C_BUILTIN] = "\x1b[0;93m", [C_ERR] = "\x1b[0;41;97m", [C_MATCH] = "\x1b[0;100;97m",
+};
+
 static void draw_row(u32 r)
 {
     u32 idx = top + r;
@@ -135,22 +290,34 @@ static void draw_row(u32 r)
     const struct line *l = &L[idx];
     char num[16];
     usize nn = snformat(num, sizeof num, "%u", idx + 1);
-    emits("\x1b[90m");
+    emits(err_line == idx + 1 ? "\x1b[91m" : "\x1b[90m");
     for (u32 k = (u32)nn; k + 1 < gutter; k++) out_ch(' ', NULL);
     emits(num);
     emits(" \x1b[0m");
+    static u8 cls[4096];
+    u32 cn = 0;
+    if (is_py) {
+        cn = l->len < sizeof cls ? l->len : (u32)sizeof cls;
+        classify(l, state_before(idx), cls);
+    }
     u32 width = cols - gutter, c = 0;
+    u8 cur = C_NORM;
     for (u32 i = 0; i < l->len; ) {
         u32 w = l->s[i] == '\t' ? TABW - c % TABW : 1;
         u32 n = cp_next(l, i) - i;
         if (c >= leftc + width) break;
         if (c + w > leftc) {
-            if (l->s[i] == '\t') { for (u32 k = c < leftc ? leftc : c; k < c + w && k < leftc + width; k++) out_ch(' ', NULL); }
+            u8 k = i < cn ? cls[i] : C_NORM;
+            if ((i64)idx == err_bl && (i64)i == err_bx) k = C_ERR;
+            else if (((i64)idx == m1_l && (i64)i == m1_x) || ((i64)idx == m2_l && (i64)i == m2_x)) k = C_MATCH;
+            if (k != cur) { emits(cls_seq[k]); cur = k; }
+            if (l->s[i] == '\t') { for (u32 k2 = c < leftc ? leftc : c; k2 < c + w && k2 < leftc + width; k2++) out_ch(' ', NULL); }
             else emit(l->s + i, n);
         }
         c += w;
         i += n;
     }
+    if (cur != C_NORM) emits("\x1b[0m");
     emits("\x1b[K");
 }
 
@@ -497,6 +664,8 @@ static void jump_to_error(void)
     while (s > 0 && buf[s - 1] != '\n') s--;
     buf[e] = 0;
     if (line >= 1) { cy = line <= nl ? line - 1 : nl - 1; cx = 0; want_col = 0; }   /* a fajl vegen tuli sor: az utolso */
+    err_line = line <= nl ? line : nl;
+    if (memcmp(buf + s, "SyntaxError", 11) == 0) find_unbalanced();     /* a par nelkuli zarojel pirosan */
     snformat(msg, sizeof msg, "%u. sor: %s", line, buf + s);
 }
 
@@ -517,6 +686,8 @@ static void run_file(void)
     emitf("--- %s futtatasa (F5) ---\n", path);
     flush();
     ao_unlink("/tmp/pyerr.txt");
+    err_line = 0;
+    err_bl = -1;
     char *argv[] = { "python", path, NULL };
     int pid = ao_spawn("/state/bin/python.aox", argv, manifest);
     int status = -1;
@@ -551,6 +722,7 @@ int main(int argc, char **argv)
 {
     if (argc < 2) { ao_puts("edit FAJL\n"); return 1; }
     strlcpy(path, argv[1], sizeof path);
+    is_py = ends_with(path, ".py");
     struct sysinfo si;
     rows = 25; cols = 80;
     if (ao_sysinfo(&si) == 0 && si.con_rows >= 5 && si.con_cols >= 20) { rows = si.con_rows; cols = si.con_cols; }
@@ -564,8 +736,17 @@ int main(int argc, char **argv)
     for (;;) {
         if (!paste_mode) {
             scroll_into_view();
+            i64 om1 = m1_l, om2 = m2_l;
+            find_match();
             if (full) { draw_all(); full = false; }
-            else draw_row(cy - top);
+            else {
+                draw_row(cy - top);
+                /* a zarojel-par masik sora: a regi es az uj kiemeles frissitese */
+                i64 rows_[4] = { om1, om2, m1_l, m2_l };
+                for (int q = 0; q < 4; q++)
+                    if (rows_[q] >= 0 && rows_[q] != (i64)cy && rows_[q] >= (i64)top && rows_[q] < (i64)(top + trows))
+                        draw_row((u32)rows_[q] - top);
+            }
             draw_bars();
             place_cursor();
             flush();
@@ -639,7 +820,7 @@ int main(int argc, char **argv)
         case 11: cut_line(); keep_msg = true; want_col = 0; break;
         case 21: paste_line(); keep_msg = true; break;
         case 12: full = true; break;
-        case K_ESC: break;
+        case K_ESC: err_line = 0; err_bl = -1; full = true; break;      /* a hibajeloles torlese */
         default:
             if (k >= 32 && k < 0xE000) {
                 char enc[4];

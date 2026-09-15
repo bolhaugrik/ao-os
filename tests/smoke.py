@@ -240,9 +240,13 @@ SESSIONS = [
         ("write /state/err2.py x=1", "bajt"),
         ("append /state/err2.py print(y)", "bajt"),
         ("cd /state", "AO "),
-        ("edit err2.py", "2 sor"),                                     # relativ nev: a traceback is igy irja
+        ("edit err2.py", "\x1b[0;93mprint\x1b[0m("),                   # relativ nev; a print beepitett: sarga
         ("\x1b[15~", "sor 2/2  oszlop 1"),                            # a kurzor a hibas (2.) sorra ugrott
         ("\x11", "edit: err2.py"),
+        ("write /state/br.py print(\"x\"", "bajt"),                    # nyitva maradt zarojel
+        ("edit /state/br.py", "\x1b[0;33m\"x\""),                      # a karakterlanc sarga-barna
+        ("\x1b[15~", "\x1b[0;41;97m(\x1b[0;33m"),                      # SyntaxError: a nyito zarojel piros hatteren
+        ("\x11", "edit: /state/br.py"),
         ("cd /", "AO> "),
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
