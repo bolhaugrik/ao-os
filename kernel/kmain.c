@@ -21,6 +21,7 @@
 #include "drv/e1000.h"
 #include "drv/rtl8101.h"
 #include "drv/screenshot.h"
+#include "drv/clipboard.h"
 #include "net/net.h"
 #include "net/dhcp.h"
 #include "fs/disk.h"
@@ -179,5 +180,6 @@ void kmain(struct bootinfo *bi)
     if (net_dev())
         task_create_kernel("net", net_thread, NULL);
     screenshot_init();                  /* F12: pixel-pontos kepernyokep a /state/shots ala */
+    clipboard_init();                   /* Ctrl+V: a PC vagolapja billentyuleutesekkent, a hidon at */
     task_idle_loop();
 }

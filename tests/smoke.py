@@ -221,6 +221,14 @@ SESSIONS = [
         ("f=open('/state/w.txt','w'); f.write('irt'); f.close(); print(open('/state/w.txt').read())", "irt"),
         ("\x04", "AO> "),
         ("cat /state/w.txt", "irt"),
+        # vagolap a PC-rol: Ctrl+V a shellben (billentyuleutesek), a szerkesztoben (nyers beillesztes), ^K -> PC
+        ("\x16", "vagolap-ok"),                       # a szimulalt hid vagolapja "echo vagolap-ok\n": lefut
+        ("edit /state/p.txt", "uj fajl"),
+        ("\x16", "beillesztve: 1 sor"),
+        ("\x0b", "vagolapra masolva"),                # ^K: a sor a PC vagolapjara (a hid valasza)
+        ("\x13", "mentve: /state/p.txt"),
+        ("\x11\x11", "edit: /state/p.txt"),
+        ("cat /state/p.txt", "echo vagolap-ok"),
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
         ("cat /state/games/2048", "AO> "),

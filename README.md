@@ -79,6 +79,10 @@ python tools\bridge.py [--provider claude|gemini] [--model ...] [--effort low|me
 A netbookon `/state/ai/bridge` a híd címe (`ip:port`), `/state/ai/psk` a kulcs. Parancsok:
 `ai <kérdés>` (egyszeri beszélgetés), `agent coder <feladat>` (a `coder` manifest jogaival dolgozik),
 `shot` (a képernyő szövege a PC `shots/` mappájába), `copy` / `paste` (a PC vágólapja mindkét irányba).
+**Ctrl+V bárhol:** a PC vágólapja billentyűleütésként érkezik a futó programba (a kernel egy szálon
+lekéri a hídon át): a shell parancssorába, a szerkesztőbe (nyersen, több sorosan, behúzás-öröklés nélkül),
+a Python REPL-be (több sorhoz előbb Ctrl+E, a végén Ctrl+D). A szerkesztő Ctrl+K-ja a kivágott sort a PC
+vágólapjára is teszi.
 A híd netbook nélkül is próbálható: `python tests\aop_client.py "feladat"`.
 
 **Projector:** `projector https://…` vagy `projector <kérdés>`: a híd letölti és lecsupaszítja az oldalt

@@ -4,7 +4,8 @@
  *
  * Billentyuk: nyilak, Home/End, PgUp/PgDn, Enter (a behuzast orokli), Tab (4 szokoz), Backspace, Del
  *   ^S ment   ^Q kilep (nem mentett valtozasnal ketszer)   ^F keres   ^N kovetkezo talalat
- *   ^G sorra ugras   ^K sor kivagasa   ^U beillesztes   ^A / ^E sor eleje / vege   ^L ujrarajzolas
+ *   ^G sorra ugras   ^K sor kivagasa (a PC vagolapjara is)   ^U beillesztes   ^A / ^E sor eleje / vege
+ *   ^L ujrarajzolas   ^V a PC vagolapja a kurzorhoz (a kernel hozza a hidon at, nyersen, behuzas nelkul)
  *
  * A sorok kulon pufferek (UTF-8 bajtok), a kurzor bajtpozicio; a kepernyon kodpontonkent egy cella,
  * a tab a kovetkezo 4-es oszlopig. Csak a valtozott sor rajzolodik ujra, gorgetesnel az egesz. */
@@ -174,7 +175,7 @@ static void draw_bars(void)
     char right[64];
     usize rn = snformat(right, sizeof right, " sor %u/%u  oszlop %u ", cy + 1, nl, cells_upto(&L[cy], cx) + 1);
     if (msg[0]) n = snformat(b, sizeof b, " %s", msg);
-    else n = snformat(b, sizeof b, " ^S ment  ^Q kilep  ^F keres  ^N kovetkezo  ^G sor  ^K kivag  ^U beilleszt");
+    else n = snformat(b, sizeof b, " ^S ment  ^Q kilep  ^F keres  ^N kovetkezo  ^G sor  ^K kivag  ^U beilleszt  ^V PC vagolap");
     if (n + rn > cols) n = cols > rn ? cols - rn : 0;
     emit(b, n);
     for (u32 k = (u32)n; k + rn < cols; k++) out_ch(' ', NULL);
@@ -198,7 +199,7 @@ static void scroll_into_view(void)
 }
 
 /* ---------------------------------------------------------------- billentyuk */
-enum { K_UP = 0xE000, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_PGUP, K_PGDN, K_DEL, K_ESC };
+enum { K_UP = 0xE000, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_PGUP, K_PGDN, K_DEL, K_ESC, K_PASTE_ON, K_PASTE_OFF };
 
 static int read_key(void)
 {
@@ -206,6 +207,8 @@ static int read_key(void)
     isize n = ao_read(0, b, sizeof b);
     if (n <= 0) return -1;
     if (b[0] == 0x1b) {
+        if (n >= 6 && b[1] == '[' && b[2] == '2' && b[3] == '0' && b[5] == '~')   /* ESC[200~ / ESC[201~ */
+            return b[4] == '0' ? K_PASTE_ON : K_PASTE_OFF;
         if (n >= 3 && b[1] == '[') {
             switch (b[2]) {
             case 'A': return K_UP;
@@ -266,11 +269,11 @@ static void insert_bytes(const char *s, u32 n)
     modified = true;
 }
 
-static void split_line(void)
+static void split_line(bool inherit_indent)
 {
     struct line *l = &L[cy];
     u32 indent = 0;
-    while (indent < l->len && indent < cx && l->s[indent] == ' ') indent++;
+    if (inherit_indent) while (indent < l->len && indent < cx && l->s[indent] == ' ') indent++;
     u32 tail = l->len - cx;
     char *tmp = malloc(indent + tail + 1);
     memset(tmp, ' ', indent);
@@ -325,6 +328,30 @@ static void del_forward(void)
     }
 }
 
+/* szoveg a PC vagolapjara: /tmp/clip.txt + a clip-agent (agentd --file clip) a clip.cap jogaival */
+static bool copy_to_pc(const char *s, u32 n)
+{
+    int fd = ao_open("/tmp/clip.txt", O_WRITE | O_CREATE | O_TRUNC);
+    if (fd < 0) return false;
+    ao_write(fd, s, n);
+    ao_write(fd, "\n", 1);
+    ao_close(fd);
+    static char manifest[1024];
+    fd = ao_open("/etc/agents/clip.cap", O_READ);
+    if (fd < 0) return false;
+    isize r = ao_read(fd, manifest, sizeof manifest - 1);
+    ao_close(fd);
+    if (r <= 0) return false;
+    manifest[r] = 0;
+    char *argv[] = { "agentd", "--file", "clip", "clip", "/tmp/clip.txt", NULL };
+    int pid = ao_spawn("/bin/agentd.aox", argv, manifest);
+    if (pid < 0) pid = ao_spawn("/rd/bin/agentd.aox", argv, manifest);
+    if (pid < 0) return false;
+    int status = 1;
+    ao_wait(pid, &status);
+    return status == 0;
+}
+
 static void cut_line(void)
 {
     struct line *l = &L[cy];
@@ -337,7 +364,8 @@ static void cut_line(void)
     cx = 0;
     modified = true;
     full = true;
-    snformat(msg, sizeof msg, "sor kivagva (^U beilleszti)");
+    bool pc = copy_to_pc(clip, cliplen);
+    snformat(msg, sizeof msg, "sor kivagva%s (^U beilleszti)", pc ? ", a PC vagolapjan is" : "");
 }
 
 static void paste_line(void)
@@ -453,18 +481,36 @@ int main(int argc, char **argv)
     gutter = gutter_for(nl);
     emits("\x1b[2J");
     full = true;
+    bool paste_mode = false, paste_last_nl = false;   /* Ctrl+V: a kernel a PC vagolapjat ESC[200~ ... ESC[201~ kozott adja */
+    u32 paste_lines = 0;
     for (;;) {
-        scroll_into_view();
-        if (full) { draw_all(); full = false; }
-        else draw_row(cy - top);
-        draw_bars();
-        place_cursor();
-        flush();
+        if (!paste_mode) {
+            scroll_into_view();
+            if (full) { draw_all(); full = false; }
+            else draw_row(cy - top);
+            draw_bars();
+            place_cursor();
+            flush();
+        }
         int k = read_key();
         if (k < 0) break;
         bool keep_msg = false;
         if (k != 17) quit_armed = false;
+        if (paste_mode) {
+            /* nyers beillesztes: nincs behuzas-orokles, a tab is marad */
+            if (k == K_PASTE_OFF) {
+                paste_mode = false;
+                full = true;
+                want_col = cells_upto(&L[cy], cx);
+                snformat(msg, sizeof msg, "beillesztve: %u sor", paste_lines + (paste_last_nl ? 0 : 1));
+            } else if (k == '\n') { split_line(false); paste_lines++; paste_last_nl = true; }
+            else if (k == '\t') { insert_bytes("\t", 1); paste_last_nl = false; }
+            else if (k >= 32 && k < 0xE000) { char enc[4]; u32 n = utf8_put((u32)k, enc); insert_bytes(enc, n); paste_last_nl = false; }
+            continue;
+        }
         switch (k) {
+        case K_PASTE_ON: paste_mode = true; paste_lines = 0; paste_last_nl = false; break;
+        case K_PASTE_OFF: break;
         case K_UP: move_vert(-1); break;
         case K_DOWN: move_vert(1); break;
         case K_PGUP: move_vert(-(int)trows); if (top >= trows) top -= trows; else top = 0; full = true; break;
@@ -481,7 +527,7 @@ int main(int argc, char **argv)
             break;
         case K_HOME: case 1: cx = 0; want_col = 0; break;
         case K_END: case 5: cx = L[cy].len; want_col = cells_upto(&L[cy], cx); break;
-        case '\n': split_line(); want_col = cells_upto(&L[cy], cx); break;
+        case '\n': split_line(true); want_col = cells_upto(&L[cy], cx); break;
         case '\b': case 0x7F: backspace(); want_col = cells_upto(&L[cy], cx); break;
         case K_DEL: del_forward(); break;
         case '\t': {

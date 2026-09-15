@@ -10,6 +10,7 @@ enum {
     KEY_PGUP, KEY_PGDN, KEY_INS, KEY_DEL, KEY_ESC,
     KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12,
     KEY_SHIFT = 0xE020, KEY_CTRL, KEY_ALT, KEY_ALTGR, KEY_CAPS,     /* csak nyers modban */
+    KEY_PASTE_ON = 0xE030, KEY_PASTE_OFF,   /* beillesztett szoveg eleje/vege (szoveges modban ESC[200~ / ESC[201~) */
 };
 
 #define MOD_SHIFT 1
@@ -44,3 +45,6 @@ void kbd_set_layout(const char *name);    /* "us" vagy "hu" */
 void kbd_set_raw(bool on);
 bool kbd_raw(void);
 const char *kbd_layout(void);
+/* beillesztes: az UTF-8 szoveg billentyuleutesekkent erkezik a futo programhoz, KEY_PASTE_ON/OFF
+ * kozott (Ctrl+V: a vagolap-szal hivja a PC vagolapjaval); nyers modban eldobva */
+void kbd_inject(const char *utf8, usize n);

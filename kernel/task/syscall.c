@@ -88,6 +88,8 @@ static isize con_read(u8 *buf, usize n)
     case KEY_PGUP: seq = "\x1b[5~"; break;
     case KEY_PGDN: seq = "\x1b[6~"; break;
     case KEY_ESC: seq = "\x1b"; break;
+    case KEY_PASTE_ON: seq = "\x1b[200~"; break;     /* beillesztett szoveg eleje/vege (bracketed paste) */
+    case KEY_PASTE_OFF: seq = "\x1b[201~"; break;
     default: return 0;
     }
     usize l = strlen(seq);

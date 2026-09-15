@@ -1,7 +1,9 @@
 #include "kbd.h"
 #include "serial.h"
 #include "screenshot.h"
+#include "clipboard.h"
 #include "../arch/io.h"
+#include "../mm/kheap.h"
 #include "../cpu/idt.h"
 #include "../cpu/pic.h"
 #include "../cpu/pit.h"
@@ -269,13 +271,65 @@ void kbd_init(void)
 
 static bool serial_key(struct key_event *ev);
 
+/* ---------------------------------------------------------------- beillesztes (Ctrl+V) */
+static char *inj;                   /* a beillesztendo UTF-8 szoveg (kmalloc) */
+static usize inj_len, inj_pos;
+static int inj_phase;               /* 0 nincs, 1 KEY_PASTE_ON, 2 szoveg, 3 KEY_PASTE_OFF */
+
+void kbd_inject(const char *utf8, usize n)
+{
+    if (raw_mode || !n) return;
+    char *b = kmalloc(n);
+    if (!b) return;
+    memcpy(b, utf8, n);
+    cli();
+    if (inj) kfree(inj);
+    inj = b; inj_len = n; inj_pos = 0; inj_phase = 1;
+    sti();
+    waitq_wake_all(&kbd_q);
+}
+
+static bool inject_next(struct key_event *ev)
+{
+    if (!inj_phase) return false;
+    ev->mods = 0; ev->down = 1; ev->tsc = rdtsc();
+    if (inj_phase == 1) { ev->code = KEY_PASTE_ON; inj_phase = 2; return true; }
+    if (inj_phase == 2) {
+        while (inj_pos < inj_len) {
+            u8 c = (u8)inj[inj_pos];
+            if (c == '\r') { inj_pos++; continue; }
+            int need = (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 0;
+            u32 cp = need == 0 ? c : c & (0x3F >> need);
+            inj_pos++;
+            for (int i = 0; i < need && inj_pos < inj_len; i++, inj_pos++) cp = (cp << 6) | ((u8)inj[inj_pos] & 0x3F);
+            ev->code = cp > 0xFFFF ? '?' : (u16)cp;
+            return true;
+        }
+        inj_phase = 3;
+    }
+    ev->code = KEY_PASTE_OFF;
+    inj_phase = 0;
+    kfree(inj);
+    inj = NULL;
+    return true;
+}
+
 bool kbd_poll(struct key_event *ev)
 {
-    if (rtail == rhead)
-        return serial_key(ev);          /* soros bemenet (QEMU-teszt) nem blokkolo modban is */
-    *ev = ring[rtail];
-    rtail = (rtail + 1) % RING;
-    return true;
+    for (;;) {
+        if (inject_next(ev)) return true;
+        if (rtail == rhead) {
+            if (!serial_key(ev)) return false;      /* soros bemenet (QEMU-teszt) nem blokkolo modban is */
+        } else {
+            *ev = ring[rtail];
+            rtail = (rtail + 1) % RING;
+        }
+        if (ev->code == 22 && !raw_mode) {          /* Ctrl+V: a PC vagolapja a vagolap-szalon at */
+            clipboard_request();
+            continue;
+        }
+        return true;
+    }
 }
 
 /* soros bemenet: QEMU-tesztekhez. ESC [ A/B/C/D nyilak, \r Enter, 0x7F backspace */
