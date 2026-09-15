@@ -6,3 +6,4 @@
 
 void clipboard_init(void);          /* a VFS es a taskok utan: kernel-szal inditasa */
 void clipboard_request(void);       /* Ctrl+V (a billentyuzet-lekerdezesbol) */
+void clipboard_request_shot(void);  /* Ctrl+F12 / Shift+F12: a kepernyo szovege a PC shots/ mappajaba (mint a 'shot') */

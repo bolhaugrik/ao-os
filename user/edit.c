@@ -472,24 +472,31 @@ static void jump_to_error(void)
     ao_close(fd);
     if (n <= 0) return;
     buf[n] = 0;
-    /* az utolso 'File "<path>", line N' a mi fajlunkra; az utolso nem ures sor a kivetel szovege */
+    /* az utolso 'File "<nev>", line N', ahol a nev a mi fajlunk (teljes ut vagy a fajlnev egyezik;
+     * a python a kapott nevet irja, ami lehet relativ); az utolso nem ures sor a kivetel szovege */
+    const char *base = path;
+    for (const char *p = path; *p; p++) if (*p == '/' && p[1]) base = p + 1;
+    usize bl = strlen(base);
     u32 line = 0;
-    char key[PATH_MAX + 16];
-    snformat(key, sizeof key, "File \"%s\", line ", path);
-    usize kl = strlen(key);
-    for (usize i = 0; i + kl < (usize)n; i++) {
-        if (memcmp(buf + i, key, kl) == 0) {
-            u32 v = 0;
-            for (usize j = i + kl; buf[j] >= '0' && buf[j] <= '9'; j++) v = v * 10 + (u32)(buf[j] - '0');
-            if (v) line = v;
-        }
+    for (usize i = 0; i + 8 < (usize)n; i++) {
+        if (memcmp(buf + i, "File \"", 6) != 0) continue;
+        usize q = i + 6, qe = q;
+        while (qe < (usize)n && buf[qe] != '"' && buf[qe] != '\n') qe++;
+        if (qe >= (usize)n || buf[qe] != '"' || memcmp(buf + qe, "\", line ", 8) != 0) continue;
+        usize fl = qe - q;
+        bool ours = (fl == strlen(path) && memcmp(buf + q, path, fl) == 0) ||
+                    (fl >= bl && memcmp(buf + qe - bl, base, bl) == 0 && (fl == bl || buf[qe - bl - 1] == '/'));
+        if (!ours) continue;
+        u32 v = 0;
+        for (usize j = qe + 8; j < (usize)n && buf[j] >= '0' && buf[j] <= '9'; j++) v = v * 10 + (u32)(buf[j] - '0');
+        if (v) line = v;
     }
     usize e = (usize)n;
     while (e > 0 && (buf[e - 1] == '\n' || buf[e - 1] == '\r')) e--;
     usize s = e;
     while (s > 0 && buf[s - 1] != '\n') s--;
     buf[e] = 0;
-    if (line >= 1 && line <= nl) { cy = line - 1; cx = 0; want_col = 0; }
+    if (line >= 1) { cy = line <= nl ? line - 1 : nl - 1; cx = 0; want_col = 0; }   /* a fajl vegen tuli sor: az utolso */
     snformat(msg, sizeof msg, "%u. sor: %s", line, buf + s);
 }
 

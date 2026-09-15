@@ -147,8 +147,10 @@ static void kbd_irq(struct regs *r)
     if (sc == 0xE1) { return; }
     bool release = sc & 0x80;
     sc &= 0x7F;
-    if (!e0 && sc == 0x58 && !release)
-        screenshot_request();           /* F12: pixel-pontos kepernyokep, barmelyik modban */
+    if (!e0 && sc == 0x58 && !release) {
+        if (mods & (MOD_CTRL | MOD_SHIFT)) clipboard_request_shot();    /* Ctrl/Shift+F12: a kepernyo szovege a PC-re */
+        else screenshot_request();      /* F12: pixel-pontos kepernyokep, barmelyik modban */
+    }
 
     if (e0) {
         e0 = false;

@@ -13,7 +13,7 @@
 #define CLIP_MAX  (256 * 1024)
 
 static struct waitq clip_q;
-static volatile u32 pending;
+static volatile u32 pending, pending_shot;
 
 void clipboard_request(void)
 {
@@ -21,8 +21,14 @@ void clipboard_request(void)
     waitq_wake_all(&clip_q);
 }
 
-/* a clip-agent futtatasa a clip.cap jogaival: agentd --clip /tmp/clip.txt (mint a shell 'paste'-je) */
-static bool run_clip_agent(void)
+void clipboard_request_shot(void)
+{
+    pending_shot++;
+    waitq_wake_all(&clip_q);
+}
+
+/* a clip-agent futtatasa a clip.cap jogaival: agentd ARGV (mint a shell 'paste'/'shot' parancsa) */
+static bool run_clip_agent(int argc, char **argv)
 {
     void *text;
     usize len;
@@ -38,9 +44,8 @@ static bool run_clip_agent(void)
         kprintf("\n[vagolap: nincs agentd]\n");
         return false;
     }
-    char *argv[] = { "agentd", "--clip", CLIP_FILE };
     int e;
-    struct task *t = task_create_user("vagolap", img, size, 3, argv, &cs, task_current(), &e);
+    struct task *t = task_create_user("vagolap", img, size, argc, argv, &cs, task_current(), &e);
     kfree(img);
     if (!t) { kprintf("\n[vagolap: agent inditasa: hiba %d]\n", e); return false; }
     int status = 0;
@@ -48,10 +53,31 @@ static bool run_clip_agent(void)
     return status == 0;
 }
 
+/* Ctrl+F12: a lathato kepernyo szovege -> /tmp/shot.txt -> a PC shots/ mappaja (a shell 'shot'-ja szerint) */
+static void text_shot(void)
+{
+    u32 rows = console_rows(), cols = console_cols();
+    usize cap = (usize)rows * (cols * 3 + 2) + 1;
+    char *buf = kmalloc(cap);
+    if (!buf) return;
+    usize n = 0;
+    for (u32 r = 0; r < rows; r++) {
+        console_get_screen_line(r, buf + n, cap - n - 2);
+        n += strlen(buf + n);
+        buf[n++] = '\n';
+    }
+    int e = vfs_write_all("/tmp/shot.txt", buf, n);
+    kfree(buf);
+    if (e) { kprintf("\n[shot: /tmp/shot.txt: hiba %d]\n", e); return; }
+    char *argv[] = { "agentd", "--file", "shot", "shot", "/tmp/shot.txt" };
+    run_clip_agent(5, argv);
+}
+
 static void fetch_and_inject(void)
 {
     vfs_unlink(CLIP_FILE);
-    bool ok = run_clip_agent();
+    char *argv[] = { "agentd", "--clip", CLIP_FILE };
+    bool ok = run_clip_agent(3, argv);
     void *b;
     usize n;
     if (vfs_read_all(CLIP_FILE, &b, &n)) {
@@ -69,13 +95,15 @@ static void clip_thread(void *arg)
     (void)arg;
     for (;;) {
         cli();
-        while (!pending) {
+        while (!pending && !pending_shot) {
             task_block_on(&clip_q);     /* IF=1-gyel ter vissza */
             cli();
         }
-        pending = 0;
+        bool do_paste = pending != 0, do_shot = pending_shot != 0;
+        pending = pending_shot = 0;
         sti();
-        fetch_and_inject();
+        if (do_shot) text_shot();
+        if (do_paste) fetch_and_inject();
     }
 }
 

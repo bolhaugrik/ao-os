@@ -90,7 +90,7 @@ static const struct cmd cmds[] = {
     { "ai",              "KERDES",               "egyszeri kerdes az AI-nak (chat agent)", 3 },
     { "agent",           "NEV FELADAT",          "agent a NEV.cap manifesttel (/state/agents, /etc/agents)", 3 },
     { "projector",       "CIM | KERDES",         "weboldal vagy kereses lenyomata a teljes kepernyon (--dump: szoveg)", 3 },
-    { "shot",            "[NEV | /FAJL]",        "a kepernyo szovege, vagy egy fajl a PC-re (a hid shots/ mappajaba)", 3 },
+    { "shot",            "[NEV | /FAJL]",        "a kepernyo szovege (Ctrl+F12 barhol), vagy egy fajl a PC-re (shots/)", 3 },
     { "screenshot",      "",                     "pixel-pontos kep a /state/shots/N.ppm fajlba (F12 barhol, Doomban is)", 3 },
     { "copy",            "[N]",                  "az utolso parancs kimenete (vagy N sor) a PC vagolapjara", 3 },
     { "paste",           "[FAJL]",               "a PC vagolapja a parancssorba vagy fajlba", 3 },

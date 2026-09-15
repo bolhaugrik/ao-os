@@ -237,6 +237,13 @@ SESSIONS = [
         ("edit /state/err.py", "1 sor"),
         ("\x1b[15~", "1. sor: ZeroDivisionError: divide by zero"),   # traceback, majd az allapotsorban a hiba
         ("\x11", "edit: /state/err.py"),
+        ("write /state/err2.py x=1", "bajt"),
+        ("append /state/err2.py print(y)", "bajt"),
+        ("cd /state", "AO "),
+        ("edit err2.py", "2 sor"),                                     # relativ nev: a traceback is igy irja
+        ("\x1b[15~", "sor 2/2  oszlop 1"),                            # a kurzor a hibas (2.) sorra ugrott
+        ("\x11", "edit: err2.py"),
+        ("cd /", "AO> "),
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
         ("cat /state/games/2048", "AO> "),
