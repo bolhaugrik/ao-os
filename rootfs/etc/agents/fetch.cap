@@ -6,6 +6,8 @@ fs.read   /etc/ai/**
 fs.read   /state/ai/**
 fs.write  /state/inbox/**
 fs.write  /state/games/**
+fs.write  /state/bin/**
+fs.write  /state/lib/**
 fs.write  /project/**
 fs.write  /tmp/**
 mem       4M

@@ -1,0 +1,15 @@
+# python: MicroPython a netbookon. A program a /state/bin/python.aox (telepites: fetch python.aox /state/bin).
+# Olvashat mindent, irni a /project, /state es /tmp ala tud; halozat nincs (kesobb a hidhoz).
+agent python
+console
+sysinfo
+fs.read   /state/**
+fs.read   /project/**
+fs.read   /etc/**
+fs.read   /tmp/**
+fs.read   /bin/**
+fs.read   /rd/**
+fs.write  /project/**
+fs.write  /state/**
+fs.write  /tmp/**
+mem       96M

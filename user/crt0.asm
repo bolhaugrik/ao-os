@@ -9,13 +9,18 @@ extern __bss_size
 
 AOX_BASE equ 0x400000       ; = __aox_base az aox.ld-ben es USER_LOAD a kernelben
 
+; verem merete (a kernel 16 KiB..1 MiB kozott adja); nagyobb: nasm -DAOX_STACK=1048576 (pl. MicroPython)
+%ifndef AOX_STACK
+%define AOX_STACK 65536
+%endif
+
 section .aox_header
     dd 0x31584F41           ; 'AOX1'
     dd 1                    ; version
     dd _start - AOX_BASE    ; entry (eltolas a kep elejetol)
     dd __load_end - AOX_BASE ; load_size
     dd __bss_size           ; bss_size
-    dd 65536                ; stack_size
+    dd AOX_STACK            ; stack_size
     dd 0                    ; flags
     dd 0
 

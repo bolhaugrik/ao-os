@@ -104,6 +104,7 @@ static const struct cmd cmds[] = {
     { "update",          "[net|rd|force]",       "frissites a hidrol (PC: python ao.py build) vagy a ramdiskbol; /state marad", 5 },
     { "mkfs sync",       "",                     "particio formazasa; irasok kiirasa", 5 },
     { "lastpanic",       "[clear]",              "az utolso panic a lemezrol", 5 },
+    { "python",          "[FAJL [ARG..] | -c KOD]", "MicroPython: REPL (Ctrl+D kilep), szkript, egysoros; telepites: fetch python.aox /state/bin", 2 },
     { "2048",            "",                     "a jatek: nyilak, r uj jatek, q kilep (legjobb: /state/games)", 6 },
     { "doom",            "[ARG..]",              "Doom (a /state/games/doom1.wad kell: fetch doom1.wad /state/games)", 6 },
     { "echo",            "SZOVEG",               "szoveg kiirasa", 6 },
@@ -1442,6 +1443,8 @@ static bool find_prog(const char *name, char *path)
     if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
     snformat(alt, sizeof alt, "/rd/bin/%s.aox", name);
     if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
+    snformat(alt, sizeof alt, "/state/bin/%s.aox", name);        /* telepitett programok (fetch) */
+    if (canon(alt, path) && vfs_stat(path, &st) == 0 && st.type == 1) return true;
     return false;
 }
 
@@ -1780,6 +1783,13 @@ static void execute(char *line)
     else if (!strcmp(c, "ai")) { if (argc > 1) cmd_agent("chat", "agentd", argc, argv, 1); else kprintf("hasznalat: ai KERDES\n"); }
     else if (!strcmp(c, "agent")) { if (argc > 2) cmd_agent(argv[1], "agentd", argc, argv, 2); else kprintf("agent NEV FELADAT\n"); }
     else if (!strcmp(c, "2048")) { quiet_run = true; cmd_agent("game", "game2048", argc, argv, 1); quiet_run = false; }
+    else if (!strcmp(c, "python")) {
+        struct stat st;
+        if (vfs_stat("/state/bin/python.aox", &st) != 0)
+            kprintf("python: nincs telepitve. PC-n a share/ mappaban van a python.aox (python ao.py build), netbookon:\n"
+                    "  mkdir /state/bin\n  fetch python.aox /state/bin\n");
+        else { quiet_run = true; cmd_agent("python", "/state/bin/python.aox", argc, argv, 1); quiet_run = false; }
+    }
     else if (!strcmp(c, "doom")) {
         struct stat st;
         if (vfs_stat("/state/games/doom.aox", &st) != 0)

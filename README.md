@@ -100,6 +100,12 @@ Ctrl+F keres, Ctrl+N következő, Ctrl+G sorra ugrik, Ctrl+K sor kivágása, Ctr
 a behúzást, Tab 4 szóköz). Fájlokhoz: `cp`, `mv`, `head`, `tail`, `more`, `wc`, `grep [-i] MINTA FÁJL|KÖNYVTÁR`
 (könyvtárban rekurzív), `find [KÖNYVTÁR] [MINTA]` (`*`, `?`), `hexdump`, `stat`, `du`, `df`, `tree`.
 
+**Python:** MicroPython (v1.26, saját port, `user/micropython/`) fut a netbookon. Telepítés egyszer:
+`mkdir /state/bin`, `fetch python.aox /state/bin`. Utána `python` (REPL, Ctrl+D kilép), `python FÁJL`,
+`python -c KÓD`. Fájlok az `open()`/`os` modulon át, modulok a `/state/lib` és `/project` alól, az `ao`
+modul a rendszer saját hívásait adja (`ao.sysinfo()`, `ao.getkey()`, …). A `python.cap` manifest
+szabja meg, mit érhet el: olvasni mindent, írni a `/project`, `/state`, `/tmp` alá, hálózat nincs.
+
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
 

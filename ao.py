@@ -179,6 +179,15 @@ def build():
         if os.path.exists(src):
             shutil.move(src, os.path.join(ROOT, "share", f"{big}.aox"))
 
+    print("[micropython]")
+    # MicroPython (user/micropython, sajat port): share/python.aox, a netbookra 'fetch python.aox /state/bin'
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import mpbuild
+    ulib = [b("ulib_" + s.replace("/", "_").replace(".c", ".o"))
+            for s in ("user/aolib.c", "user/malloc.c", "kernel/lib/string.c", "kernel/lib/fmt.c")]
+    py_size = mpbuild.build(t, BUILD, ulib, os.path.join(ROOT, "share", "python.aox"))
+    print(f"  python.aox: {py_size} B")
+
     print("[ramdisk]")
     # a telepitohoz a bootloader es a kernel is a ramdiskbe kerul
     os.makedirs(os.path.join(ROOT, "rootfs", "boot"), exist_ok=True)
