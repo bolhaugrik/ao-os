@@ -16,6 +16,7 @@
 #include "../fs/vfs.h"
 #include "../fs/aofs.h"
 #include "../fs/disk.h"
+#include "../fs/aofs2.h"
 #include "../drv/blk.h"
 #include "../drv/ahci.h"
 #include "../drv/acpi.h"
@@ -73,6 +74,14 @@ static const struct cmd cmds[] = {
     { "append",          "FAJL SZOVEG",          "sor hozzafuzese a fajl vegehez", 1 },
     { "rm mkdir",        "UTVONAL",              "torles; konyvtar letrehozasa", 1 },
     { "cd pwd",          "[KONYVTAR]",           "munkakonyvtar valtasa; kiirasa", 1 },
+    { "edit",            "FAJL",                 "teljes kepernyos szerkeszto (^S ment, ^Q kilep, ^F keres)", 1 },
+    { "cp mv",           "FORRAS CEL",           "masolas; athelyezes (a cel lehet konyvtar)", 1 },
+    { "head tail",       "FAJL [N]",             "elso / utolso N sor (alap 10)", 1 },
+    { "more",            "FAJL",                 "lapozva kiiras (Szokoz tovabb, q kilep)", 1 },
+    { "grep",            "[-i] MINTA FAJL|KVT",  "sorok keresese; konyvtarban rekurzivan", 1 },
+    { "find",            "[KVT] [MINTA]",        "fajlok rekurzivan, nevre illesztve (* ?)", 1 },
+    { "wc stat hexdump", "FAJL",                 "sor/szo/bajt; meret; hexa kiiras [ELTOLAS [HOSSZ]]", 1 },
+    { "tree du df",      "[KONYVTAR]",           "konyvtarfa; helyfoglalas; szabad hely", 1 },
     { "mount",           "",                     "csatolt fajlrendszerek", 1 },
     { "run",             "PROG [ARG..]",         "AOX program ring 3-ban, a shell jogaival", 2 },
     { "spawn",           "MANIFEST PROG [ARG..]","program a manifest capability-keszletevel", 2 },
@@ -104,12 +113,12 @@ static const struct cmd cmds[] = {
 #define NCMDS (sizeof cmds / sizeof cmds[0])
 
 /* a parancsnevek kulon-kulon (Tab-kiegeszites) */
-static char cmd_names[64][16];
+static char cmd_names[96][16];
 static int n_cmd_names;
 
 static void build_cmd_names(void)
 {
-    for (usize i = 0; i < NCMDS && n_cmd_names < 64; i++) {
+    for (usize i = 0; i < NCMDS && n_cmd_names < 96; i++) {
         const char *p = cmds[i].names;
         while (*p && n_cmd_names < 64) {
             int k = 0;
@@ -952,6 +961,456 @@ static void cmd_rm(const char *arg)
     if (e) kprintf("rm: %s: %s\n", path, errstr(e));
 }
 
+/* ---------------------------------------------------------------- fajl-segedprogramok */
+/* cp, mv, head, tail, wc, grep, find, hexdump, stat, du, df, tree, more: a napi munkahoz es a
+ * programozashoz; a szovegesek a teljes fajlt beolvassak (kis fajlok), a cp darabonkent masol */
+
+static void run_with_caps(const struct capset *cs, int argc, char **argv);
+
+static bool has_char(const char *s, char c)
+{
+    for (; *s; s++) if (*s == c) return true;
+    return false;
+}
+
+static u32 parse_u32(const char *s, u32 def)
+{
+    if (!s || *s < '0' || *s > '9') return def;
+    u32 v = 0;
+    for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (u32)(*s - '0');
+    return v;
+}
+
+static bool read_text(const char *cmd, const char *arg, char *path, void **buf, usize *size)
+{
+    if (!arg) { kprintf("%s: fajlnev kell\n", cmd); return false; }
+    if (!canon(arg, path)) { kprintf("%s: rossz utvonal\n", cmd); return false; }
+    struct stat st;
+    int e = vfs_stat(path, &st);
+    if (e) { kprintf("%s: %s: %s\n", cmd, path, errstr(e)); return false; }
+    if (st.type == 2) { kprintf("%s: %s: konyvtar\n", cmd, path); return false; }
+    e = vfs_read_all(path, buf, size);
+    if (e) { kprintf("%s: %s: %s\n", cmd, path, errstr(e)); return false; }
+    return true;
+}
+
+static const char *basename_of(const char *p)
+{
+    const char *b = p;
+    for (const char *q = p; *q; q++) if (*q == '/' && q[1]) b = q + 1;
+    return b;
+}
+
+/* cp FORRAS CEL / mv FORRAS CEL: a CEL lehet konyvtar is; 64 KiB-os darabokban, nagy fajlra is */
+static void cmd_cp(int argc, char **argv, bool move)
+{
+    const char *name = move ? "mv" : "cp";
+    if (argc < 3) { kprintf("%s FORRAS CEL\n", name); return; }
+    char src[VFS_PATH_MAX], dst[VFS_PATH_MAX];
+    if (!canon(argv[1], src) || !canon(argv[2], dst)) { kprintf("%s: rossz utvonal\n", name); return; }
+    struct stat st;
+    if (vfs_stat(dst, &st) == 0 && st.type == 2) {
+        usize l = strlen(dst);
+        if (l + strlen(basename_of(src)) + 2 >= sizeof dst) { kprintf("%s: tul hosszu utvonal\n", name); return; }
+        if (l > 1) dst[l++] = '/';
+        strcpy(dst + l, basename_of(src));
+    }
+    int e = vfs_stat(src, &st);
+    if (e) { kprintf("%s: %s: %s\n", name, src, errstr(e)); return; }
+    if (st.type == 2) { kprintf("%s: %s: konyvtarat nem masol\n", name, src); return; }
+    if (!strcmp(src, dst)) { kprintf("%s: a forras es a cel azonos\n", name); return; }
+    struct handle in, out;
+    memset(&in, 0, sizeof in);
+    memset(&out, 0, sizeof out);
+    if ((e = vfs_open(src, O_READ, &in))) { kprintf("%s: %s: %s\n", name, src, errstr(e)); return; }
+    if ((e = vfs_open(dst, O_WRITE | O_CREATE | O_TRUNC, &out))) { vfs_close(&in); kprintf("%s: %s: %s\n", name, dst, errstr(e)); return; }
+    u8 *blk = kmalloc(65536);
+    u64 total = 0;
+    for (;;) {
+        isize r = vfs_read(&in, blk, 65536);
+        if (r < 0) { e = (int)r; break; }
+        if (r == 0) break;
+        isize w = vfs_write(&out, blk, (usize)r);
+        if (w != r) { e = w < 0 ? (int)w : E_IO; break; }
+        total += (u64)r;
+    }
+    kfree(blk);
+    vfs_close(&in);
+    vfs_close(&out);
+    if (e) { kprintf("%s: %s: %s\n", name, dst, errstr(e)); return; }
+    if (move && (e = vfs_unlink(src))) { kprintf("%s: a forras torlese: %s\n", name, errstr(e)); return; }
+    kprintf("%s: %s -> %s, %lu bajt\n", name, src, dst, total);
+}
+
+/* head FAJL [N] / tail FAJL [N]: elso / utolso N sor (alap 10) */
+static void cmd_headtail(int argc, char **argv, bool tail)
+{
+    char path[VFS_PATH_MAX];
+    void *buf;
+    usize size;
+    if (!read_text(argv[0], argc > 1 ? argv[1] : NULL, path, &buf, &size)) return;
+    u32 want = parse_u32(argc > 2 ? argv[2] : NULL, 10);
+    const char *p = buf;
+    usize start = 0, end = size;
+    if (tail) {
+        u32 seen = 0;
+        usize i = size;
+        if (i && p[i - 1] == '\n') i--;
+        while (i > 0) {
+            if (p[i - 1] == '\n' && ++seen == want) break;
+            i--;
+        }
+        start = i;
+    } else {
+        u32 seen = 0;
+        usize i = 0;
+        while (i < size && seen < want) if (p[i++] == '\n') seen++;
+        end = i;
+    }
+    for (usize i = start; i < end; i++) console_putc(p[i]);
+    if (end > start && p[end - 1] != '\n') kprintf("\n");
+    kfree(buf);
+}
+
+/* wc FAJL: sorok, szavak, bajtok */
+static void cmd_wc(int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    void *buf;
+    usize size;
+    if (!read_text("wc", argc > 1 ? argv[1] : NULL, path, &buf, &size)) return;
+    const char *p = buf;
+    u64 lines = 0, words = 0;
+    bool inw = false;
+    for (usize i = 0; i < size; i++) {
+        if (p[i] == '\n') lines++;
+        bool sp = p[i] == ' ' || p[i] == '\t' || p[i] == '\n' || p[i] == '\r';
+        if (!sp && !inw) words++;
+        inw = !sp;
+    }
+    if (size && p[size - 1] != '\n') lines++;
+    kprintf("%lu sor  %lu szo  %lu bajt  %s\n", lines, words, (u64)size, path);
+    kfree(buf);
+}
+
+/* grep [-i] MINTA FAJL|KONYVTAR: reszszoveg keresese soronkent; konyvtarnal rekurzivan */
+static void grep_file(const char *pat, const char *path, bool icase, bool show_name, u32 *hits)
+{
+    void *buf;
+    usize size;
+    if (vfs_read_all(path, &buf, &size)) return;
+    const char *p = buf;
+    usize plen = strlen(pat);
+    u32 lineno = 1;
+    for (usize i = 0; i < size; lineno++) {
+        usize e = i;
+        while (e < size && p[e] != '\n') e++;
+        bool found = false;
+        for (usize k = i; k + plen <= e && !found; k++) {
+            usize j = 0;
+            while (j < plen) {
+                char a = p[k + j], b = pat[j];
+                if (icase) { if (a >= 'A' && a <= 'Z') a += 32; if (b >= 'A' && b <= 'Z') b += 32; }
+                if (a != b) break;
+                j++;
+            }
+            found = j == plen;
+        }
+        if (found) {
+            (*hits)++;
+            if (show_name) kprintf("%s:", path);
+            kprintf("%u: ", lineno);
+            for (usize k = i; k < e; k++) console_putc(p[k]);
+            kprintf("\n");
+        }
+        i = e + 1;
+    }
+    kfree(buf);
+}
+
+static void grep_dir(const char *pat, const char *dir, bool icase, u32 *hits, int depth)
+{
+    if (depth > 8) return;
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(dir, ents, 64);
+    for (int i = 0; i < n; i++) {
+        char p[VFS_PATH_MAX];
+        snformat(p, sizeof p, "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, ents[i].name);
+        if (ents[i].type == 2) grep_dir(pat, p, icase, hits, depth + 1);
+        else if (ents[i].size < 4u * 1024 * 1024) grep_file(pat, p, icase, true, hits);
+    }
+    kfree(ents);
+}
+
+static void cmd_grep(int argc, char **argv)
+{
+    int a = 1;
+    bool icase = false;
+    while (a < argc && argv[a][0] == '-' && argv[a][1]) {       /* -i kis/nagybetu; -r elfogadva (konyvtar mindig rekurziv) */
+        if (!strcmp(argv[a], "-i")) icase = true;
+        else if (strcmp(argv[a], "-r") != 0) { kprintf("grep: ismeretlen kapcsolo: %s\n", argv[a]); return; }
+        a++;
+    }
+    if (argc < a + 2) { kprintf("grep [-i] MINTA FAJL|KONYVTAR\n"); return; }
+    const char *pat = argv[a];
+    char path[VFS_PATH_MAX];
+    if (!canon(argv[a + 1], path)) { kprintf("grep: rossz utvonal\n"); return; }
+    struct stat st;
+    int e = vfs_stat(path, &st);
+    if (e) { kprintf("grep: %s: %s\n", path, errstr(e)); return; }
+    u32 hits = 0;
+    if (st.type == 2) grep_dir(pat, path, icase, &hits, 0);
+    else grep_file(pat, path, icase, false, &hits);
+    if (!hits) kprintf("grep: nincs talalat\n");
+}
+
+/* egyszeru minta: * barmi, ? egy karakter */
+static bool glob_match(const char *pat, const char *s)
+{
+    while (*pat) {
+        if (*pat == '*') {
+            while (*pat == '*') pat++;
+            if (!*pat) return true;
+            for (const char *t = s; *t; t++) if (glob_match(pat, t)) return true;
+            return false;
+        }
+        if (!*s || (*pat != '?' && *pat != *s)) return false;
+        pat++; s++;
+    }
+    return !*s;
+}
+
+/* find [KONYVTAR] [MINTA]: rekurziv lista, nevre illesztve (*, ?) */
+static void find_dir(const char *dir, const char *pat, int depth, u32 *n_out)
+{
+    if (depth > 12) return;
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(dir, ents, 64);
+    for (int i = 0; i < n; i++) {
+        char p[VFS_PATH_MAX];
+        snformat(p, sizeof p, "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, ents[i].name);
+        if (!pat || glob_match(pat, ents[i].name)) {
+            (*n_out)++;
+            if (ents[i].type == 2) kprintf("%s/\n", p);
+            else kprintf("%s  %u B\n", p, ents[i].size);
+        }
+        if (ents[i].type == 2 && strcmp(ents[i].name, "sys") != 0) find_dir(p, pat, depth + 1, n_out);
+    }
+    kfree(ents);
+}
+
+static void cmd_find(int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    const char *dir = ".", *pat = NULL;
+    if (argc > 1) {
+        /* find MINTA (ha nincs benne '/', es van benne * vagy ?) vagy find KONYVTAR [MINTA] */
+        bool looks_pat = !has_char(argv[1], '/') && (has_char(argv[1], '*') || has_char(argv[1], '?'));
+        if (argc == 2 && looks_pat) pat = argv[1];
+        else { dir = argv[1]; if (argc > 2) pat = argv[2]; }
+    }
+    if (!canon(dir, path)) { kprintf("find: rossz utvonal\n"); return; }
+    u32 n = 0;
+    find_dir(path, pat, 0, &n);
+    if (!n) kprintf("find: nincs talalat\n");
+}
+
+/* hexdump FAJL [ELTOLAS [HOSSZ]]: 16 bajt soronkent, alap 256 bajt */
+static void cmd_hexdump(int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    void *buf;
+    usize size;
+    if (!read_text("hexdump", argc > 1 ? argv[1] : NULL, path, &buf, &size)) return;
+    usize off = parse_u32(argc > 2 ? argv[2] : NULL, 0);
+    usize len = parse_u32(argc > 3 ? argv[3] : NULL, 256);
+    const u8 *p = buf;
+    if (off > size) off = size;
+    if (off + len > size) len = size - off;
+    for (usize i = 0; i < len; i += 16) {
+        kprintf("%08lx  ", (u64)(off + i));
+        for (usize k = 0; k < 16; k++) {
+            if (i + k < len) kprintf("%02x ", p[off + i + k]); else kprintf("   ");
+            if (k == 7) kprintf(" ");
+        }
+        kprintf(" |");
+        for (usize k = 0; k < 16 && i + k < len; k++) {
+            u8 c = p[off + i + k];
+            console_putc(c >= 32 && c < 127 ? (char)c : '.');
+        }
+        kprintf("|\n");
+    }
+    kprintf("%lu bajt osszesen\n", (u64)size);
+    kfree(buf);
+}
+
+static void cmd_stat(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    if (!arg || !canon(arg, path)) { kprintf("stat UTVONAL\n"); return; }
+    struct stat st;
+    int e = vfs_stat(path, &st);
+    if (e) { kprintf("stat: %s: %s\n", path, errstr(e)); return; }
+    if (st.type == 2) {
+        struct dirent *ents = kmalloc(64 * sizeof *ents);
+        int n = vfs_list(path, ents, 64);
+        kfree(ents);
+        kprintf("%s: konyvtar, %d bejegyzes\n", path, n < 0 ? 0 : n);
+    } else {
+        kprintf("%s: fajl, %u bajt\n", path, st.size);
+    }
+}
+
+static u64 du_dir(const char *dir, int depth, u32 *files)
+{
+    if (depth > 12) return 0;
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(dir, ents, 64);
+    u64 total = 0;
+    for (int i = 0; i < n; i++) {
+        if (ents[i].type == 2) {
+            if (!strcmp(ents[i].name, "sys")) continue;
+            char p[VFS_PATH_MAX];
+            snformat(p, sizeof p, "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, ents[i].name);
+            total += du_dir(p, depth + 1, files);
+        } else { total += ents[i].size; (*files)++; }
+    }
+    kfree(ents);
+    return total;
+}
+
+/* du [KONYVTAR]: a bejegyzesek merete es az osszes */
+static void cmd_du(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(arg ? arg : ".", path)) { kprintf("du: rossz utvonal\n"); return; }
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(path, ents, 64);
+    if (n < 0) { kprintf("du: %s: %s\n", path, errstr(n)); kfree(ents); return; }
+    u64 total = 0;
+    u32 files = 0;
+    for (int i = 0; i < n; i++) {
+        u64 sz;
+        u32 f = 0;
+        char p[VFS_PATH_MAX];
+        snformat(p, sizeof p, "%s/%s", strcmp(path, "/") == 0 ? "" : path, ents[i].name);
+        if (ents[i].type == 2) { if (!strcmp(ents[i].name, "sys")) continue; sz = du_dir(p, 1, &f); }
+        else { sz = ents[i].size; f = 1; }
+        kprintf("  %10lu  %s%s\n", sz, ents[i].name, ents[i].type == 2 ? "/" : "");
+        total += sz;
+        files += f;
+    }
+    kfree(ents);
+    kprintf("  %10lu  osszesen, %u fajl, %s\n", total, files, path);
+}
+
+/* df: a lemez es a csatolasok helyzete */
+static void cmd_df(void)
+{
+    for (u32 i = 0; ; i++) {
+        const struct mount *m = vfs_mount_at(i);
+        if (!m) break;
+        if (!strcmp(m->ops->name, "aofs2")) {
+            u32 blocks, freeb, inodes;
+            char label[32];
+            aofs2_info(m->fs, &blocks, &freeb, &inodes, label, sizeof label);
+            u64 tot = (u64)blocks * 4096 / 1024, fr = (u64)freeb * 4096 / 1024;
+            kprintf("  %-8s aofs2 '%s'  %lu KiB, %lu KiB szabad (%lu%%), %u inode\n", m->prefix, label, tot, fr,
+                    tot ? fr * 100 / tot : 0, inodes);
+        } else {
+            kprintf("  %-8s %s%s\n", m->prefix, m->ops->name, m->ro ? " (ro)" : "");
+        }
+    }
+}
+
+static void tree_dir(const char *dir, int depth, int maxdepth, u32 *nd, u32 *nf)
+{
+    if (depth >= maxdepth) return;
+    struct dirent *ents = kmalloc(64 * sizeof *ents);
+    int n = vfs_list(dir, ents, 64);
+    for (int pass = 0; pass < 2; pass++) {              /* elobb a konyvtarak, utana a fajlok */
+        for (int i = 0; i < n; i++) {
+            bool isdir = ents[i].type == 2;
+            if (isdir != (pass == 0)) continue;
+            for (int k = 0; k < depth; k++) kprintf("  ");
+            if (isdir) {
+                (*nd)++;
+                console_set_color(CON_AMBER, CON_BLACK);
+                kprintf("%s/\n", ents[i].name);
+                console_set_color(CON_DEFAULT_FG, CON_BLACK);
+                if (strcmp(ents[i].name, "sys") != 0) {
+                    char p[VFS_PATH_MAX];
+                    snformat(p, sizeof p, "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, ents[i].name);
+                    tree_dir(p, depth + 1, maxdepth, nd, nf);
+                }
+            } else {
+                (*nf)++;
+                kprintf("%s  %u B\n", ents[i].name, ents[i].size);
+            }
+        }
+    }
+    kfree(ents);
+}
+
+/* tree [KONYVTAR] [MELYSEG]: a fa, konyvtarak elol (alap melyseg 4) */
+static void cmd_tree(int argc, char **argv)
+{
+    char path[VFS_PATH_MAX];
+    if (!canon(argc > 1 ? argv[1] : ".", path)) { kprintf("tree: rossz utvonal\n"); return; }
+    u32 nd = 0, nf = 0;
+    kprintf("%s\n", path);
+    tree_dir(path, 0, (int)parse_u32(argc > 2 ? argv[2] : NULL, 4), &nd, &nf);
+    kprintf("%u konyvtar, %u fajl\n", nd, nf);
+}
+
+/* more FAJL: lapozva; Szokoz/Enter/PgDn tovabb, q kilep */
+static void cmd_more(const char *arg)
+{
+    char path[VFS_PATH_MAX];
+    void *buf;
+    usize size;
+    if (!read_text("more", arg, path, &buf, &size)) return;
+    const char *p = buf;
+    u32 page = console_rows() > 2 ? console_rows() - 2 : 1;
+    u32 shown = 0;
+    usize i = 0;
+    while (i < size) {
+        usize e = i;
+        while (e < size && p[e] != '\n') e++;
+        for (usize k = i; k < e; k++) console_putc(p[k]);
+        kprintf("\n");
+        i = e + 1;
+        if (++shown >= page && i < size) {
+            console_set_color(CON_BLACK, CON_AMBER);
+            kprintf("-- tovabb (%lu%%) -- Szokoz/Enter, q --", (u64)i * 100 / size);
+            console_set_color(CON_DEFAULT_FG, CON_BLACK);
+            console_flush();
+            struct key_event ev;
+            for (;;) {
+                kbd_wait(&ev);
+                if (ev.code == 'q' || ev.code == 3 || ev.code == KEY_ESC || ev.code == ' ' || ev.code == '\n' ||
+                    ev.code == KEY_PGDN || ev.code == KEY_DOWN) break;
+            }
+            kprintf("\r\x1b[K");
+            if (ev.code == 'q' || ev.code == 3 || ev.code == KEY_ESC) break;
+            shown = ev.code == '\n' || ev.code == KEY_DOWN ? page - 1 : 0;
+        }
+    }
+    kfree(buf);
+}
+
+/* edit [FAJL]: a szerkeszto (user/edit.c) a shell jogaival */
+static void cmd_edit(int argc, char **argv)
+{
+    char *args[ARGV_MAX + 1];
+    int n = 0;
+    args[n++] = "edit";
+    for (int i = 1; i < argc && n < ARGV_MAX; i++) args[n++] = argv[i];
+    quiet_run = true;
+    run_with_caps(&task_current()->caps, n, args);
+    quiet_run = false;
+}
+
 static void cmd_mkdir(const char *arg)
 {
     char path[VFS_PATH_MAX];
@@ -1295,6 +1754,20 @@ static void execute(char *line)
     else if (!strcmp(c, "write")) { if (argc > 2) cmd_write(argc, argv); else kprintf("write fajl szoveg...\n"); }
     else if (!strcmp(c, "rm")) { if (argc > 1) cmd_rm(argv[1]); }
     else if (!strcmp(c, "mkdir")) { if (argc > 1) cmd_mkdir(argv[1]); }
+    else if (!strcmp(c, "cp")) cmd_cp(argc, argv, false);
+    else if (!strcmp(c, "mv")) cmd_cp(argc, argv, true);
+    else if (!strcmp(c, "head")) cmd_headtail(argc, argv, false);
+    else if (!strcmp(c, "tail")) cmd_headtail(argc, argv, true);
+    else if (!strcmp(c, "wc")) cmd_wc(argc, argv);
+    else if (!strcmp(c, "grep")) cmd_grep(argc, argv);
+    else if (!strcmp(c, "find")) cmd_find(argc, argv);
+    else if (!strcmp(c, "hexdump")) cmd_hexdump(argc, argv);
+    else if (!strcmp(c, "stat")) cmd_stat(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "du")) cmd_du(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "df")) cmd_df();
+    else if (!strcmp(c, "tree")) cmd_tree(argc, argv);
+    else if (!strcmp(c, "more")) cmd_more(argc > 1 ? argv[1] : NULL);
+    else if (!strcmp(c, "edit")) cmd_edit(argc, argv);
     else if (!strcmp(c, "cd")) cmd_cd(argc > 1 ? argv[1] : NULL);
     else if (!strcmp(c, "pwd")) kprintf("%s\n", cwd());
     else if (!strcmp(c, "run")) { if (argc > 1) cmd_run(argc, argv); else kprintf("run: programnev kell\n"); }

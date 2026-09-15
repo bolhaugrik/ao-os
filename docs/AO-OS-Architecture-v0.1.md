@@ -662,6 +662,12 @@ A Doom-út mellékhatása egy irány: a netbook egyre inkább a képernyő és a
 
 Kitekintés Phase 6 után: képnéző és PDF-olvasó ugyanezen a képcsatornán, térkép csempékből, osztott konzol (agent-napló + shell), USB-Ethernet vagy WiFi-stick (USB-stack), hang (HD Audio), egér/touchpad és ablakozó.
 
+### Phase 7: programozás a gépen (2026-09-15-től)
+
+Cél: a netbook legyen önmagában programozásra használható, és az AI ugyanezekkel az eszközökkel dolgozzon. A terv négy lépése: (1) szerkesztő és fájl-segédprogramok, (2) MicroPython a Doom mintájára (freestanding C, `share/`-ből telepítve, `ao` modullal), (3) futtatás a szerkesztőből hibasor-ugrással, (4) `exec` eszköz az agentnek a meglévő `SYS_SPAWN`-nal, a saját jogainak részhalmazával. A hardveres irányok (Pi 400 + Pico, bővítménykönyvtár) külön döntésig jegelve.
+
+**7.1 Szerkesztő és segédprogramok (kész, QEMU-ban igazolva 2026-09-15):** `user/edit.c` (kb. 550 sor) nano-szerű, teljes képernyős szerkesztő: soronként külön puffer, UTF-8 kódpontonként egy cella, tab a következő 4-es oszlopig, csak a változott sor rajzolódik újra (görgetésnél az egész), sorszám-oszlop, felső és alsó állapotsor. Szöveges konzolmódban fut, mert a billentyűzet-kiosztást a kernel alkalmazza (nyers módban a Shift-et is a programnak kellene), a Ctrl-kombinációk vezérlőkódként jönnek. Billentyűk: ^S ment, ^Q kilép (nem mentett változásnál kétszer), ^F/^N keres, ^G sor, ^K/^U sor kivágása és beillesztése, Enter örökli a behúzást (Pythonhoz), Tab 4 szóköz. A shell `edit` parancsa a shell jogaival indítja. A shellbe került: `cp`/`mv` (64 KiB-os darabokban, a cél lehet könyvtár; az AOFS-ben nincs átnevezés, az `mv` másol és töröl), `head`/`tail`, `more` (lapozó), `wc`, `grep [-i]` (könyvtárban rekurzív), `find` (`*`, `?` minta), `hexdump`, `stat`, `du`, `df` (az AOFS v2 blokk- és inode-számlálóiból), `tree`. A smoke 3. menete mindet lefedi, a szerkesztőt is (két sor begépelése soros porton, ^S, ^Q).
+
 ---
 
 ## 19. Nyitott kérdések az első HW-teszt előtt

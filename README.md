@@ -95,6 +95,11 @@ teljes képernyőn, linkről linkre Tab-bal, Enter megnyit. A PC-n ehhez `pip in
 Nyers TCP-mérés a netbookról: a PC-n `python tests\sink.py`, a netbookon `netbench <PC IP> 9020 [MB]`;
 a `net` parancs TCP-számlálókat is mutat (újraküldés, nulla ablak, ablakkorlát).
 
+**Szerkesztő és segédprogramok:** `edit FÁJL` teljes képernyős szerkesztő (Ctrl+S ment, Ctrl+Q kilép,
+Ctrl+F keres, Ctrl+N következő, Ctrl+G sorra ugrik, Ctrl+K sor kivágása, Ctrl+U beillesztés, Enter örökli
+a behúzást, Tab 4 szóköz). Fájlokhoz: `cp`, `mv`, `head`, `tail`, `more`, `wc`, `grep [-i] MINTA FÁJL|KÖNYVTÁR`
+(könyvtárban rekurzív), `find [KÖNYVTÁR] [MINTA]` (`*`, `?`), `hexdump`, `stat`, `du`, `df`, `tree`.
+
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).
 
