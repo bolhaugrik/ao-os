@@ -90,6 +90,19 @@ static isize con_read(u8 *buf, usize n)
     case KEY_ESC: seq = "\x1b"; break;
     case KEY_PASTE_ON: seq = "\x1b[200~"; break;     /* beillesztett szoveg eleje/vege (bracketed paste) */
     case KEY_PASTE_OFF: seq = "\x1b[201~"; break;
+    case KEY_F1: seq = "\x1bOP"; break;              /* F-billentyuk: xterm-sorozatok */
+    case KEY_F2: seq = "\x1bOQ"; break;
+    case KEY_F3: seq = "\x1bOR"; break;
+    case KEY_F4: seq = "\x1bOS"; break;
+    case KEY_F5: seq = "\x1b[15~"; break;
+    case KEY_F6: seq = "\x1b[17~"; break;
+    case KEY_F7: seq = "\x1b[18~"; break;
+    case KEY_F8: seq = "\x1b[19~"; break;
+    case KEY_F9: seq = "\x1b[20~"; break;
+    case KEY_F10: seq = "\x1b[21~"; break;
+    case KEY_F11: seq = "\x1b[23~"; break;
+    case KEY_F12: seq = "\x1b[24~"; break;
+    case KEY_INS: seq = "\x1b[2~"; break;
     default: return 0;
     }
     usize l = strlen(seq);

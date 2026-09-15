@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     readline_init0();
 
     int ret = 0;
+    ao_unlink("/tmp/pyerr.txt");
     if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
         /* a shell szokozoknel darabol, idezojel nelkul: a darabokat visszaragasztjuk */
         vstr_t src;
@@ -84,6 +85,22 @@ int main(int argc, char **argv)
     }
     mp_deinit();
     return ret;
+}
+
+/* kezeletlen kivetel: a traceback a /tmp/pyerr.txt-be (a szerkeszto F5-je innen olvassa a hibas sort) */
+static void err_print(void *data, const char *str, size_t len) { ao_write(*(int *)data, str, len); }
+
+void ao_after_exec(int input_kind, unsigned exec_flags, void *nlr_ret_val, int *ret)
+{
+    (void)input_kind; (void)exec_flags; (void)ret;
+    if (!nlr_ret_val) return;
+    mp_obj_t exc = MP_OBJ_FROM_PTR(nlr_ret_val);
+    if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(((mp_obj_base_t *)nlr_ret_val)->type), MP_OBJ_FROM_PTR(&mp_type_SystemExit))) return;
+    int fd = ao_open("/tmp/pyerr.txt", O_WRITE | O_CREATE | O_TRUNC);
+    if (fd < 0) return;
+    mp_print_t p = { &fd, err_print };
+    mp_obj_print_exception(&p, exc);
+    ao_close(fd);
 }
 
 void gc_collect(void)

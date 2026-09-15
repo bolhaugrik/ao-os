@@ -109,6 +109,7 @@ a behúzást, Tab 4 szóköz). Fájlokhoz: `cp`, `mv`, `head`, `tail`, `more`, `
 `python -c KÓD`. Fájlok az `open()`/`os` modulon át, modulok a `/state/lib` és `/project` alól, az `ao`
 modul a rendszer saját hívásait adja (`ao.sysinfo()`, `ao.getkey()`, …). A `python.cap` manifest
 szabja meg, mit érhet el: olvasni mindent, írni a `/project`, `/state`, `/tmp` alá, hálózat nincs.
+A szerkesztőben `.py` fájlnál az F5 ment, futtat, és hibánál a hibás sorra ugrik a kivétel üzenetével.
 
 Indításkor a shell a `/state/rc` (vagy `/etc/rc`) sorait futtatja, például `append /state/rc kbd hu`.
 Játék is van: `2048` (nyilak, `r` új játék, `q` kilép; a legjobb eredmény a `/state/games/2048` fájlban).

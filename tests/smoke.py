@@ -229,6 +229,14 @@ SESSIONS = [
         ("\x13", "mentve: /state/p.txt"),
         ("\x11\x11", "edit: /state/p.txt"),
         ("cat /state/p.txt", "echo vagolap-ok"),
+        # F5 a szerkesztobol: futtatas, majd hibas fajlnal ugras a sorra
+        ("edit /state/t.py", "1 sor"),
+        ("\x1b[15~", "--- vege (rc=0) ---"),         # az F5 utani Enter: vissza a szerkesztobe
+        ("\x11", "edit: /state/t.py"),
+        ("write /state/err.py print(1/0)", "bajt"),
+        ("edit /state/err.py", "1 sor"),
+        ("\x1b[15~", "1. sor: ZeroDivisionError: divide by zero"),   # traceback, majd az allapotsorban a hiba
+        ("\x11", "edit: /state/err.py"),
         ("2048", "legjobb"),
         ("\x1b[A\x1b[D\x1b[B\x1b[Cq", "2048: pont"),
         ("cat /state/games/2048", "AO> "),

@@ -101,5 +101,9 @@ typedef long mp_off_t;
 
 #include <alloca.h>
 
+/* kezeletlen kivetel utan a traceback a /tmp/pyerr.txt-be is (a szerkeszto F5-je ebbol ugrik a sorra) */
+void ao_after_exec(int input_kind, unsigned exec_flags, void *nlr_ret_val, int *ret);
+#define MICROPY_BOARD_AFTER_PYTHON_EXEC(kind, flags, ret_val, ret) ao_after_exec((int)(kind), (unsigned)(flags), (ret_val), (ret))
+
 #define MP_STATE_PORT MP_STATE_VM
 #define MICROPY_MPHALPORT_H "mphalport.h"

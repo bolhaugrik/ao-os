@@ -6,6 +6,7 @@
  *   ^S ment   ^Q kilep (nem mentett valtozasnal ketszer)   ^F keres   ^N kovetkezo talalat
  *   ^G sorra ugras   ^K sor kivagasa (a PC vagolapjara is)   ^U beillesztes   ^A / ^E sor eleje / vege
  *   ^L ujrarajzolas   ^V a PC vagolapja a kurzorhoz (a kernel hozza a hidon at, nyersen, behuzas nelkul)
+ *   F5 .py fajlnal: mentes, futtatas Pythonnal, hibanal ugras a sorra (a /tmp/pyerr.txt tracebackjebol)
  *
  * A sorok kulon pufferek (UTF-8 bajtok), a kurzor bajtpozicio; a kepernyon kodpontonkent egy cella,
  * a tab a kovetkezo 4-es oszlopig. Csak a valtozott sor rajzolodik ujra, gorgetesnel az egesz. */
@@ -175,7 +176,7 @@ static void draw_bars(void)
     char right[64];
     usize rn = snformat(right, sizeof right, " sor %u/%u  oszlop %u ", cy + 1, nl, cells_upto(&L[cy], cx) + 1);
     if (msg[0]) n = snformat(b, sizeof b, " %s", msg);
-    else n = snformat(b, sizeof b, " ^S ment  ^Q kilep  ^F keres  ^N kovetkezo  ^G sor  ^K kivag  ^U beilleszt  ^V PC vagolap");
+    else n = snformat(b, sizeof b, " ^S ment  ^Q kilep  ^F keres  ^N kovetkezo  ^G sor  ^K kivag  ^U beilleszt  ^V PC vagolap  F5 futtat");
     if (n + rn > cols) n = cols > rn ? cols - rn : 0;
     emit(b, n);
     for (u32 k = (u32)n; k + rn < cols; k++) out_ch(' ', NULL);
@@ -199,7 +200,7 @@ static void scroll_into_view(void)
 }
 
 /* ---------------------------------------------------------------- billentyuk */
-enum { K_UP = 0xE000, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_PGUP, K_PGDN, K_DEL, K_ESC, K_PASTE_ON, K_PASTE_OFF };
+enum { K_UP = 0xE000, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_PGUP, K_PGDN, K_DEL, K_ESC, K_PASTE_ON, K_PASTE_OFF, K_F5 };
 
 static int read_key(void)
 {
@@ -209,6 +210,7 @@ static int read_key(void)
     if (b[0] == 0x1b) {
         if (n >= 6 && b[1] == '[' && b[2] == '2' && b[3] == '0' && b[5] == '~')   /* ESC[200~ / ESC[201~ */
             return b[4] == '0' ? K_PASTE_ON : K_PASTE_OFF;
+        if (n >= 5 && b[1] == '[' && b[2] == '1' && b[3] == '5' && b[4] == '~') return K_F5;
         if (n >= 3 && b[1] == '[') {
             switch (b[2]) {
             case 'A': return K_UP;
@@ -452,6 +454,75 @@ static bool save(void)
     return true;
 }
 
+/* ---------------------------------------------------------------- futtatas (F5) */
+/* a fajl kiterjesztese .py: mentes, a python.aox futtatasa a python.cap jogaival a konzolon, majd
+ * a /tmp/pyerr.txt tracebackjebol a hibas sorra ugras es az uzenet az allapotsorban */
+static bool ends_with(const char *s, const char *suf)
+{
+    usize l = strlen(s), m = strlen(suf);
+    return l >= m && strcmp(s + l - m, suf) == 0;
+}
+
+static void jump_to_error(void)
+{
+    int fd = ao_open("/tmp/pyerr.txt", O_READ);
+    if (fd < 0) return;
+    static char buf[4096];
+    isize n = ao_read(fd, buf, sizeof buf - 1);
+    ao_close(fd);
+    if (n <= 0) return;
+    buf[n] = 0;
+    /* az utolso 'File "<path>", line N' a mi fajlunkra; az utolso nem ures sor a kivetel szovege */
+    u32 line = 0;
+    char key[PATH_MAX + 16];
+    snformat(key, sizeof key, "File \"%s\", line ", path);
+    usize kl = strlen(key);
+    for (usize i = 0; i + kl < (usize)n; i++) {
+        if (memcmp(buf + i, key, kl) == 0) {
+            u32 v = 0;
+            for (usize j = i + kl; buf[j] >= '0' && buf[j] <= '9'; j++) v = v * 10 + (u32)(buf[j] - '0');
+            if (v) line = v;
+        }
+    }
+    usize e = (usize)n;
+    while (e > 0 && (buf[e - 1] == '\n' || buf[e - 1] == '\r')) e--;
+    usize s = e;
+    while (s > 0 && buf[s - 1] != '\n') s--;
+    buf[e] = 0;
+    if (line >= 1 && line <= nl) { cy = line - 1; cx = 0; want_col = 0; }
+    snformat(msg, sizeof msg, "%u. sor: %s", line, buf + s);
+}
+
+static void run_file(void)
+{
+    if (!ends_with(path, ".py")) { snformat(msg, sizeof msg, "F5: csak .py fajlt futtat (python)"); return; }
+    struct stat st;
+    if (ao_stat("/state/bin/python.aox", &st) != 0) { snformat(msg, sizeof msg, "F5: nincs python (fetch python.aox /state/bin)"); return; }
+    if (modified && !save()) return;
+    static char manifest[1024];
+    int fd = ao_open("/etc/agents/python.cap", O_READ);
+    if (fd < 0) { snformat(msg, sizeof msg, "F5: nincs /etc/agents/python.cap"); return; }
+    isize r = ao_read(fd, manifest, sizeof manifest - 1);
+    ao_close(fd);
+    if (r <= 0) return;
+    manifest[r] = 0;
+    emits("\x1b[2J\x1b[H");
+    emitf("--- %s futtatasa (F5) ---\n", path);
+    flush();
+    ao_unlink("/tmp/pyerr.txt");
+    char *argv[] = { "python", path, NULL };
+    int pid = ao_spawn("/state/bin/python.aox", argv, manifest);
+    int status = -1;
+    if (pid < 0) ao_printf("python: inditas: %s\n", ao_errstr(pid));
+    else ao_wait(pid, &status);
+    ao_printf("--- vege (rc=%d) --- barmely billentyu: vissza a szerkesztobe\n", status);
+    read_key();
+    msg[0] = 0;
+    jump_to_error();
+    if (!msg[0]) snformat(msg, sizeof msg, "lefutott, rc=%d", status);
+    full = true;
+}
+
 /* ---------------------------------------------------------------- fociklus */
 /* sorszam-oszlop: a legnagyobb sorszam szamjegyei + egy szokoz, legalabb 4 */
 static u32 gutter_for(u32 n)
@@ -511,6 +582,7 @@ int main(int argc, char **argv)
         switch (k) {
         case K_PASTE_ON: paste_mode = true; paste_lines = 0; paste_last_nl = false; break;
         case K_PASTE_OFF: break;
+        case K_F5: run_file(); keep_msg = true; break;
         case K_UP: move_vert(-1); break;
         case K_DOWN: move_vert(1); break;
         case K_PGUP: move_vert(-(int)trows); if (top >= trows) top -= trows; else top = 0; full = true; break;

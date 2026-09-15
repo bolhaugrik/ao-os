@@ -336,7 +336,7 @@ bool kbd_poll(struct key_event *ev)
 static bool serial_key(struct key_event *ev)
 {
     static int st;
-    static u32 ucp;
+    static u32 ucp, snum;
     static int uneed;
     while (serial_has_input()) {
         u8 c = serial_getc();
@@ -362,7 +362,8 @@ static bool serial_key(struct key_event *ev)
             ev->code = c;
             return true;
         }
-        if (st == 1) { st = (c == '[') ? 2 : 0; continue; }
+        if (st == 1) { st = (c == '[') ? 2 : 0; snum = 0; continue; }
+        if (c >= '0' && c <= '9') { snum = snum * 10 + (u32)(c - '0'); continue; }   /* ESC [ szam ~ */
         st = 0;
         switch (c) {
         case 'A': ev->code = KEY_UP; return true;
@@ -371,6 +372,13 @@ static bool serial_key(struct key_event *ev)
         case 'D': ev->code = KEY_LEFT; return true;
         case 'H': ev->code = KEY_HOME; return true;
         case 'F': ev->code = KEY_END; return true;
+        case '~': {
+            static const u16 map[] = { [2] = KEY_INS, [3] = KEY_DEL, [5] = KEY_PGUP, [6] = KEY_PGDN,
+                [11] = KEY_F1, [12] = KEY_F2, [13] = KEY_F3, [14] = KEY_F4, [15] = KEY_F5, [17] = KEY_F6,
+                [18] = KEY_F7, [19] = KEY_F8, [20] = KEY_F9, [21] = KEY_F10, [23] = KEY_F11, [24] = KEY_F12 };
+            if (snum < sizeof map / sizeof map[0] && map[snum]) { ev->code = map[snum]; return true; }
+            continue;
+        }
         }
     }
     return false;
